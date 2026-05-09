@@ -77,8 +77,15 @@
         <section class="charts-grid">
             <div class="chart-card chart-large">
                 <div class="chart-header">
-                    <h2>Evoluci&oacute;n diaria</h2>
-                    <span class="chart-subtitle">Gasto vs Leads</span>
+                    <div>
+                        <h2 id="chart-timeseries-title">Evoluci&oacute;n diaria</h2>
+                        <span class="chart-subtitle">Gasto vs Leads</span>
+                    </div>
+                    <div class="granularity-selector" role="tablist">
+                        <button class="gran-btn active" data-gran="daily">D&iacute;a</button>
+                        <button class="gran-btn" data-gran="weekly">Semana</button>
+                        <button class="gran-btn" data-gran="monthly">Mes</button>
+                    </div>
                 </div>
                 <div class="chart-body">
                     <canvas id="chart-timeseries"></canvas>

@@ -49,20 +49,32 @@ def _fetch_leads_by_campaign(conn, since, until):
     return {r["campaign_id"]: r["leads"] or 0 for r in rows}
 
 
-def _fetch_leads_by_date(conn, since, until):
+def _period_expr(granularity):
+    """Devuelve la expresion SQL para agrupar por dia/semana/mes."""
+    if granularity == "weekly":
+        # Lunes de la semana (ISO): substraer (weekday-1) dias, donde weekday: lun=1..dom=7
+        return "date(date, '-' || ((CAST(strftime('%w', date) AS INTEGER) + 6) % 7) || ' days')"
+    if granularity == "monthly":
+        # Primer dia del mes
+        return "date(date, 'start of month')"
+    return "date"
+
+
+def _fetch_leads_by_period(conn, since, until, granularity="daily"):
     placeholders = ",".join("?" for _ in LEAD_ACTION_TYPES)
+    period_expr = _period_expr(granularity)
     rows = conn.execute(
         f"""
-        SELECT date, SUM(value) AS leads
+        SELECT {period_expr} AS period, SUM(value) AS leads
         FROM actions_daily
         WHERE date BETWEEN ? AND ?
           AND action_type IN ({placeholders})
-        GROUP BY date
-        ORDER BY date
+        GROUP BY period
+        ORDER BY period
         """,
         (since, until, *LEAD_ACTION_TYPES),
     ).fetchall()
-    return {r["date"]: r["leads"] or 0 for r in rows}
+    return {r["period"]: r["leads"] or 0 for r in rows}
 
 
 @app.route("/")
@@ -121,35 +133,41 @@ def api_kpis():
 
 @app.route("/api/timeseries")
 def api_timeseries():
-    """Serie diaria de gasto, clicks y leads."""
+    """Serie de gasto, clicks y leads agregada por periodo (diario/semanal/mensual)."""
     days = int(request.args.get("days", 30))
+    granularity = request.args.get("granularity", "daily")
+    if granularity not in ("daily", "weekly", "monthly"):
+        granularity = "daily"
     since, until = _date_range(days)
+    period_expr = _period_expr(granularity)
+
     with _get_conn() as conn:
         rows = conn.execute(
-            """
-            SELECT date, SUM(spend) spend, SUM(clicks) clicks, SUM(impressions) impressions
+            f"""
+            SELECT {period_expr} AS period,
+                   SUM(spend) spend, SUM(clicks) clicks, SUM(impressions) impressions
             FROM insights_daily
             WHERE date BETWEEN ? AND ?
-            GROUP BY date
-            ORDER BY date
+            GROUP BY period
+            ORDER BY period
             """,
             (since, until),
         ).fetchall()
-        leads_by_date = _fetch_leads_by_date(conn, since, until)
+        leads_by_period = _fetch_leads_by_period(conn, since, until, granularity)
 
     series = []
     for r in rows:
-        d = r["date"]
+        p = r["period"]
         series.append(
             {
-                "date": d,
+                "period": p,
                 "spend": round(r["spend"] or 0, 2),
                 "clicks": r["clicks"] or 0,
                 "impressions": r["impressions"] or 0,
-                "leads": int(leads_by_date.get(d, 0)),
+                "leads": int(leads_by_period.get(p, 0)),
             }
         )
-    return jsonify(series)
+    return jsonify({"granularity": granularity, "data": series})
 
 
 @app.route("/api/campaigns")

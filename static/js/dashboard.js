@@ -2,10 +2,13 @@
 
 const state = {
     days: 30,
+    granularity: 'daily',
     campaigns: [],
     sortBy: 'spend',
     sortDir: 'desc',
 };
+
+const MONTH_NAMES_ES = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
 
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => document.querySelectorAll(sel);
@@ -30,8 +33,8 @@ async function fetchKpis(days) {
     if (!r.ok) throw new Error('KPIs API error');
     return r.json();
 }
-async function fetchTimeseries(days) {
-    const r = await fetch(`/api/timeseries?days=${days}`);
+async function fetchTimeseries(days, granularity) {
+    const r = await fetch(`/api/timeseries?days=${days}&granularity=${granularity}`);
     if (!r.ok) throw new Error('Timeseries API error');
     return r.json();
 }
@@ -63,6 +66,13 @@ function formatDateES(iso) {
     const [y, m, d] = iso.substring(0, 10).split('-');
     return `${d}/${m}/${y}`;
 }
+function formatPeriodLabel(iso, granularity) {
+    if (!iso) return '-';
+    const [y, m, d] = iso.substring(0, 10).split('-');
+    if (granularity === 'monthly') return `${MONTH_NAMES_ES[parseInt(m, 10) - 1]} ${y}`;
+    if (granularity === 'weekly') return `Sem ${d}/${m}`;
+    return `${d}/${m}/${y}`;
+}
 function formatDateTimeES(iso) {
     if (!iso) return '-';
     // ISO viene en UTC ("YYYY-MM-DD HH:MM:SS"), convertimos a local
@@ -74,10 +84,16 @@ function formatDateTimeES(iso) {
 let chartTimeseries = null;
 let chartTopCampaigns = null;
 
-function renderTimeseries(data) {
-    const labels = data.map(d => formatDateES(d.date));
+function renderTimeseries(payload) {
+    const granularity = payload.granularity || 'daily';
+    const data = payload.data || [];
+    const labels = data.map(d => formatPeriodLabel(d.period, granularity));
     const spend = data.map(d => d.spend);
     const leads = data.map(d => d.leads);
+
+    const titleMap = { daily: 'Evolución diaria', weekly: 'Evolución semanal', monthly: 'Evolución mensual' };
+    const titleEl = $('#chart-timeseries-title');
+    if (titleEl) titleEl.textContent = titleMap[granularity] || 'Evolución';
 
     const ctx = $('#chart-timeseries').getContext('2d');
     if (chartTimeseries) chartTimeseries.destroy();
@@ -301,7 +317,7 @@ async function loadAll() {
     try {
         const [k, ts, cs] = await Promise.all([
             fetchKpis(state.days),
-            fetchTimeseries(state.days),
+            fetchTimeseries(state.days, state.granularity),
             fetchCampaigns(state.days),
         ]);
         renderKpis(k);
@@ -311,6 +327,15 @@ async function loadAll() {
         renderTable();
     } catch (e) {
         toast('Error cargando datos: ' + e.message, 'error');
+    }
+}
+
+async function loadTimeseriesOnly() {
+    try {
+        const ts = await fetchTimeseries(state.days, state.granularity);
+        renderTimeseries(ts);
+    } catch (e) {
+        toast('Error cargando grafico: ' + e.message, 'error');
     }
 }
 
@@ -347,6 +372,16 @@ function init() {
             btn.classList.add('active');
             state.days = parseInt(btn.dataset.days, 10);
             loadAll();
+        });
+    });
+
+    // Selector de granularidad (solo afecta al grafico de evolucion)
+    $$('.gran-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            $$('.gran-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            state.granularity = btn.dataset.gran;
+            loadTimeseriesOnly();
         });
     });
 
