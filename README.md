@@ -53,7 +53,7 @@ analisis-meta-ads/
    ```
    python app.py
    ```
-   Abrir http://localhost:5000
+   Abrir http://localhost:5001 (puerto 5001 para no chocar con el proyecto Consulta Stock Rols que usa el 5000)
 
 ## Token de Meta
 

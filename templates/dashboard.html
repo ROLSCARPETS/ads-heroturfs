@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Analisis Meta Ads - Heroturfs</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+</head>
+<body>
+    <header class="topbar">
+        <div class="topbar-left">
+            <h1>Analisis Meta Ads <span class="brand">Heroturfs</span></h1>
+            <span class="subtitle">act_2287331294937474 - EUR</span>
+        </div>
+        <div class="topbar-right">
+            <div class="range-selector" role="tablist">
+                <button class="range-btn" data-days="7">7 d&iacute;as</button>
+                <button class="range-btn active" data-days="30">30 d&iacute;as</button>
+                <button class="range-btn" data-days="90">90 d&iacute;as</button>
+            </div>
+            <button id="btn-sync" class="btn btn-primary">
+                <span class="sync-icon">&#x21bb;</span>
+                <span class="sync-label">Sincronizar</span>
+            </button>
+        </div>
+    </header>
+
+    <div class="meta-bar">
+        <span id="date-range" class="date-range">-</span>
+        <span class="separator">&middot;</span>
+        <span id="last-sync" class="last-sync">Ultima sincronizacion: -</span>
+    </div>
+
+    <main class="content">
+        <!-- KPIs -->
+        <section class="kpi-grid">
+            <div class="kpi-card kpi-spend">
+                <div class="kpi-label">Gasto total</div>
+                <div class="kpi-value" id="kpi-spend">-</div>
+                <div class="kpi-unit">EUR</div>
+            </div>
+            <div class="kpi-card">
+                <div class="kpi-label">Impresiones</div>
+                <div class="kpi-value" id="kpi-impressions">-</div>
+            </div>
+            <div class="kpi-card">
+                <div class="kpi-label">Alcance</div>
+                <div class="kpi-value" id="kpi-reach">-</div>
+            </div>
+            <div class="kpi-card">
+                <div class="kpi-label">Clicks</div>
+                <div class="kpi-value" id="kpi-clicks">-</div>
+            </div>
+            <div class="kpi-card">
+                <div class="kpi-label">CTR</div>
+                <div class="kpi-value" id="kpi-ctr">-</div>
+                <div class="kpi-unit">%</div>
+            </div>
+            <div class="kpi-card">
+                <div class="kpi-label">CPC</div>
+                <div class="kpi-value" id="kpi-cpc">-</div>
+                <div class="kpi-unit">EUR</div>
+            </div>
+            <div class="kpi-card kpi-leads">
+                <div class="kpi-label">Leads</div>
+                <div class="kpi-value" id="kpi-leads">-</div>
+            </div>
+            <div class="kpi-card kpi-cpl">
+                <div class="kpi-label">CPL</div>
+                <div class="kpi-value" id="kpi-cpl">-</div>
+                <div class="kpi-unit">EUR</div>
+            </div>
+        </section>
+
+        <!-- Graficos -->
+        <section class="charts-grid">
+            <div class="chart-card chart-large">
+                <div class="chart-header">
+                    <h2>Evoluci&oacute;n diaria</h2>
+                    <span class="chart-subtitle">Gasto vs Leads</span>
+                </div>
+                <div class="chart-body">
+                    <canvas id="chart-timeseries"></canvas>
+                </div>
+            </div>
+            <div class="chart-card">
+                <div class="chart-header">
+                    <h2>Top campa&ntilde;as por gasto</h2>
+                </div>
+                <div class="chart-body">
+                    <canvas id="chart-top-campaigns"></canvas>
+                </div>
+            </div>
+        </section>
+
+        <!-- Tabla campanas -->
+        <section class="table-card">
+            <div class="table-header">
+                <h2>Campa&ntilde;as</h2>
+                <button id="btn-export" class="btn btn-secondary">Exportar CSV</button>
+            </div>
+            <div class="table-wrapper">
+                <table id="table-campaigns">
+                    <thead>
+                        <tr>
+                            <th class="th-name">Campa&ntilde;a</th>
+                            <th>Estado</th>
+                            <th class="th-num">Gasto</th>
+                            <th class="th-num">Impresiones</th>
+                            <th class="th-num">Clicks</th>
+                            <th class="th-num">CTR</th>
+                            <th class="th-num">CPC</th>
+                            <th class="th-num">Leads</th>
+                            <th class="th-num">CPL</th>
+                        </tr>
+                    </thead>
+                    <tbody></tbody>
+                    <tfoot></tfoot>
+                </table>
+            </div>
+        </section>
+    </main>
+
+    <!-- Toast -->
+    <div id="toast" class="toast"></div>
+
+    <script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
+</body>
+</html>
