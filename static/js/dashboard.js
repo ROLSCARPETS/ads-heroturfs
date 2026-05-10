@@ -370,7 +370,13 @@ function init() {
         btn.addEventListener('click', () => {
             $$('.range-btn').forEach(b => b.classList.remove('active'));
             btn.classList.add('active');
-            state.days = parseInt(btn.dataset.days, 10);
+            // "all" se pasa tal cual; los numericos se mantienen como string
+            state.days = btn.dataset.days;
+            // Si pasamos a "Todo" o "12 meses", forzar granularidad mensual por defecto
+            if (state.days === 'all' || parseInt(state.days, 10) >= 180) {
+                state.granularity = 'monthly';
+                $$('.gran-btn').forEach(b => b.classList.toggle('active', b.dataset.gran === 'monthly'));
+            }
             loadAll();
         });
     });

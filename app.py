@@ -1,7 +1,7 @@
 """Dashboard web Flask para analisis de campanas Meta Ads de Heroturfs."""
 
 import sqlite3
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from flask import Flask, jsonify, render_template, request
@@ -27,10 +27,29 @@ def _get_conn():
     return conn
 
 
-def _date_range(days):
+def _resolve_range(days_param):
+    """Resuelve el rango (since, until, days_label) segun el param.
+
+    days_param puede ser:
+    - Un entero como string ("30", "90", "365"): N dias hacia atras desde hoy
+    - "all": desde el primer registro en BBDD hasta hoy
+    """
     until = date.today()
-    since = until - timedelta(days=days - 1)
-    return since.isoformat(), until.isoformat()
+    if days_param == "all":
+        with _get_conn() as conn:
+            r = conn.execute("SELECT MIN(date) mn FROM insights_daily").fetchone()
+        if r and r["mn"]:
+            since = datetime.strptime(r["mn"], "%Y-%m-%d").date()
+        else:
+            since = until
+    else:
+        try:
+            days = int(days_param)
+        except (TypeError, ValueError):
+            days = 30
+        since = until - timedelta(days=max(days - 1, 0))
+    days_label = (until - since).days + 1
+    return since.isoformat(), until.isoformat(), days_label
 
 
 def _fetch_leads_by_campaign(conn, since, until):
@@ -84,8 +103,8 @@ def index():
 
 @app.route("/api/kpis")
 def api_kpis():
-    days = int(request.args.get("days", 30))
-    since, until = _date_range(days)
+    days_param = request.args.get("days", "30")
+    since, until, days = _resolve_range(days_param)
     with _get_conn() as conn:
         r = conn.execute(
             """
@@ -134,11 +153,11 @@ def api_kpis():
 @app.route("/api/timeseries")
 def api_timeseries():
     """Serie de gasto, clicks y leads agregada por periodo (diario/semanal/mensual)."""
-    days = int(request.args.get("days", 30))
+    days_param = request.args.get("days", "30")
     granularity = request.args.get("granularity", "daily")
     if granularity not in ("daily", "weekly", "monthly"):
         granularity = "daily"
-    since, until = _date_range(days)
+    since, until, _days = _resolve_range(days_param)
     period_expr = _period_expr(granularity)
 
     with _get_conn() as conn:
@@ -173,8 +192,8 @@ def api_timeseries():
 @app.route("/api/campaigns")
 def api_campaigns():
     """Tabla de campanas con metricas agregadas en el rango."""
-    days = int(request.args.get("days", 30))
-    since, until = _date_range(days)
+    days_param = request.args.get("days", "30")
+    since, until, days = _resolve_range(days_param)
     with _get_conn() as conn:
         rows = conn.execute(
             """

@@ -2,16 +2,20 @@
 
 Trae:
 - Lista de campanas del ad account
-- Insights diarios por campana (ultimos N dias)
+- Insights diarios por campana (rango configurable)
 - Acciones (conversiones, etc.) diarias por campana
 
 Uso:
-    python meta_sync.py
+    python meta_sync.py                          # ultimos SYNC_DAYS_BACK dias (.env, default 90)
+    python meta_sync.py --days 180               # ultimos 180 dias
+    python meta_sync.py --since 2025-01-01       # desde 2025-01-01 hasta hoy
+    python meta_sync.py --since 2025-01-01 --until 2025-12-31
 """
 
+import argparse
 import os
 import sys
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 import requests
 from dotenv import load_dotenv
@@ -23,7 +27,7 @@ load_dotenv()
 ACCESS_TOKEN = os.getenv("META_ACCESS_TOKEN")
 AD_ACCOUNT_ID = os.getenv("META_AD_ACCOUNT_ID")
 API_VERSION = os.getenv("META_API_VERSION", "v21.0")
-DAYS_BACK = int(os.getenv("SYNC_DAYS_BACK", "30"))
+DAYS_BACK = int(os.getenv("SYNC_DAYS_BACK", "90"))
 
 BASE_URL = f"https://graph.facebook.com/{API_VERSION}"
 
@@ -37,7 +41,7 @@ def _get(path, params=None):
     params = dict(params or {})
     params["access_token"] = ACCESS_TOKEN
     url = f"{BASE_URL}/{path}"
-    r = requests.get(url, params=params, timeout=60)
+    r = requests.get(url, params=params, timeout=120)
     if r.status_code != 200:
         try:
             err = r.json().get("error", {})
@@ -57,8 +61,7 @@ def _paginate(path, params=None):
         next_url = data.get("paging", {}).get("next")
         if not next_url:
             break
-        # next_url ya trae token y todos los params, llamada directa
-        r = requests.get(next_url, timeout=60)
+        r = requests.get(next_url, timeout=120)
         if r.status_code != 200:
             raise MetaAPIError(f"Pagination HTTP {r.status_code}: {r.text}")
         data = r.json()
@@ -72,10 +75,8 @@ def fetch_campaigns():
     return list(_paginate(path, {"fields": fields, "limit": 100}))
 
 
-def fetch_insights(days_back):
-    """Trae insights diarios por campana de los ultimos N dias."""
-    until = date.today()
-    since = until - timedelta(days=days_back)
+def fetch_insights(since, until):
+    """Trae insights diarios por campana entre `since` y `until` (objetos date)."""
     fields = "campaign_id,date_start,impressions,reach,clicks,spend,ctr,cpc,cpm,frequency,actions,action_values"
     params = {
         "level": "campaign",
@@ -88,16 +89,25 @@ def fetch_insights(days_back):
     return list(_paginate(path, params))
 
 
-def sync():
+def sync(since=None, until=None):
+    """Ejecuta el sync. Si no se pasan fechas, usa SYNC_DAYS_BACK del .env."""
     if not ACCESS_TOKEN or not AD_ACCOUNT_ID:
         print("ERROR: faltan META_ACCESS_TOKEN o META_AD_ACCOUNT_ID en .env", file=sys.stderr)
         sys.exit(1)
 
+    if until is None:
+        until = date.today()
+    if since is None:
+        since = until - timedelta(days=DAYS_BACK)
+
+    days_span = (until - since).days
+
     print(f"[init] DB en {db.DB_PATH}")
+    print(f"[init] Rango: {since.isoformat()} -> {until.isoformat()} ({days_span} dias)")
     db.init_db()
 
     with db.get_conn() as conn:
-        sync_id = db.log_sync_start(conn, DAYS_BACK)
+        sync_id = db.log_sync_start(conn, days_span)
 
     campaigns_count = 0
     insights_count = 0
@@ -114,8 +124,8 @@ def sync():
                 campaigns_count += 1
 
         # 2. Insights diarios
-        print(f"[2/2] Trayendo insights diarios (ultimos {DAYS_BACK} dias)...")
-        insights = fetch_insights(DAYS_BACK)
+        print(f"[2/2] Trayendo insights diarios...")
+        insights = fetch_insights(since, until)
         print(f"      {len(insights)} filas de insights")
         with db.get_conn() as conn:
             for ins in insights:
@@ -163,5 +173,28 @@ def sync():
         raise
 
 
+def _parse_date(s):
+    return datetime.strptime(s, "%Y-%m-%d").date()
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Sincroniza datos de Meta Ads a SQLite local.")
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument("--days", type=int, help=f"Numero de dias hacia atras desde hoy (default: {DAYS_BACK} de .env).")
+    group.add_argument("--since", type=_parse_date, help="Fecha de inicio YYYY-MM-DD.")
+    parser.add_argument("--until", type=_parse_date, help="Fecha de fin YYYY-MM-DD (default: hoy).")
+    args = parser.parse_args()
+
+    until = args.until or date.today()
+    if args.since:
+        since = args.since
+    elif args.days:
+        since = until - timedelta(days=args.days)
+    else:
+        since = until - timedelta(days=DAYS_BACK)
+
+    sync(since=since, until=until)
+
+
 if __name__ == "__main__":
-    sync()
+    main()
