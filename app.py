@@ -9,6 +9,7 @@ from flask import Flask, jsonify, render_template, request
 import db
 import hubspot_sync
 import meta_sync
+from campaign_country import SUPPORTED_COUNTRIES
 
 app = Flask(__name__)
 app.config["TEMPLATES_AUTO_RELOAD"] = True
@@ -20,6 +21,53 @@ LEAD_ACTION_TYPES = (
     "onsite_conversion.lead_grouped",
     "offsite_content_view_add_meta_leads",
 )
+
+# Fuentes de captacion en HubSpot
+HUBSPOT_META_SOURCE = "Redes Sociales - IG/FB"
+HUBSPOT_GOOGLE_SOURCE = "Web - Google Ads"
+
+
+def _hubspot_period_expr(granularity):
+    """Misma logica que _period_expr pero aplicada a SUBSTR(createdate,1,10) de HubSpot."""
+    if granularity == "weekly":
+        return ("date(SUBSTR(createdate, 1, 10), '-' || "
+                "((CAST(strftime('%w', SUBSTR(createdate,1,10)) AS INTEGER) + 6) % 7) || ' days')")
+    if granularity == "monthly":
+        return "date(SUBSTR(createdate, 1, 10), 'start of month')"
+    return "SUBSTR(createdate, 1, 10)"
+
+
+def _count_hubspot_leads(conn, since_iso, until_iso, source=None, country=None):
+    """Cuenta contactos HubSpot creados en el rango. Filtros opcionales."""
+    sql = "SELECT COUNT(*) c FROM hubspot_contacts WHERE createdate BETWEEN ? AND ?"
+    params = [since_iso, until_iso]
+    if source is not None:
+        sql += " AND fuentes_de_captacion_especificas = ?"
+        params.append(source)
+    if country:
+        sql += " AND pais = ?"
+        params.append(country)
+    return conn.execute(sql, params).fetchone()["c"]
+
+
+def _hubspot_leads_by_period(conn, since_iso, until_iso, granularity, source=None, country=None):
+    """Devuelve dict {period: count} agregando contactos HubSpot por periodo."""
+    period_expr = _hubspot_period_expr(granularity)
+    sql = f"SELECT {period_expr} AS period, COUNT(*) c FROM hubspot_contacts WHERE createdate BETWEEN ? AND ?"
+    params = [since_iso, until_iso]
+    if source is not None:
+        sql += " AND fuentes_de_captacion_especificas = ?"
+        params.append(source)
+    if country:
+        sql += " AND pais = ?"
+        params.append(country)
+    sql += " GROUP BY period ORDER BY period"
+    return {r["period"]: r["c"] for r in conn.execute(sql, params)}
+
+
+def _date_to_hubspot_iso(d_str, end=False):
+    """Convierte 'YYYY-MM-DD' a ISO completo para comparar contra createdate de HubSpot."""
+    return d_str + ("T23:59:59.999Z" if end else "T00:00:00.000Z")
 
 
 def _get_conn():
@@ -105,18 +153,28 @@ def index():
 @app.route("/api/kpis")
 def api_kpis():
     days_param = request.args.get("days", "30")
+    country = request.args.get("country") or None
     since, until, days = _resolve_range(days_param)
     with _get_conn() as conn:
-        r = conn.execute(
-            """
-            SELECT SUM(spend) spend, SUM(impressions) impressions,
-                   SUM(reach) reach, SUM(clicks) clicks
-            FROM insights_daily
-            WHERE date BETWEEN ? AND ?
-            """,
-            (since, until),
-        ).fetchone()
-        leads_total = sum(_fetch_leads_by_campaign(conn, since, until).values())
+        # Spend/impr/clicks de Meta filtrados por pais (via JOIN con campaigns)
+        sql = (
+            "SELECT SUM(i.spend) spend, SUM(i.impressions) impressions, "
+            "SUM(i.reach) reach, SUM(i.clicks) clicks "
+            "FROM insights_daily i JOIN campaigns c ON c.id = i.campaign_id "
+            "WHERE i.date BETWEEN ? AND ?"
+        )
+        params = [since, until]
+        if country:
+            sql += " AND c.country = ?"
+            params.append(country)
+        r = conn.execute(sql, params).fetchone()
+
+        # Leads ahora vienen de HubSpot (contactos atribuidos a Meta = "Redes Sociales - IG/FB")
+        # con filtro de pais opcional.
+        since_iso = _date_to_hubspot_iso(since)
+        until_iso = _date_to_hubspot_iso(until, end=True)
+        leads_total = _count_hubspot_leads(conn, since_iso, until_iso,
+                                           source=HUBSPOT_META_SOURCE, country=country)
 
         # Ultima sincronizacion OK
         last_sync = conn.execute(
@@ -137,6 +195,7 @@ def api_kpis():
             "since": since,
             "until": until,
             "days": days,
+            "country": country,
             "spend": round(spend, 2),
             "impressions": impressions,
             "reach": reach,
@@ -153,27 +212,39 @@ def api_kpis():
 
 @app.route("/api/timeseries")
 def api_timeseries():
-    """Serie de gasto, clicks y leads agregada por periodo (diario/semanal/mensual)."""
+    """Serie de gasto, clicks y leads agregada por periodo (diario/semanal/mensual).
+
+    Leads vienen de HubSpot (contactos atribuidos a Meta), no de Meta API.
+    """
     days_param = request.args.get("days", "30")
+    country = request.args.get("country") or None
     granularity = request.args.get("granularity", "daily")
     if granularity not in ("daily", "weekly", "monthly"):
         granularity = "daily"
     since, until, _days = _resolve_range(days_param)
     period_expr = _period_expr(granularity)
 
+    sql = (
+        f"SELECT {period_expr} AS period, "
+        "SUM(i.spend) spend, SUM(i.clicks) clicks, SUM(i.impressions) impressions "
+        "FROM insights_daily i JOIN campaigns c ON c.id = i.campaign_id "
+        "WHERE i.date BETWEEN ? AND ?"
+    )
+    params = [since, until]
+    if country:
+        sql += " AND c.country = ?"
+        params.append(country)
+    sql += " GROUP BY period ORDER BY period"
+
     with _get_conn() as conn:
-        rows = conn.execute(
-            f"""
-            SELECT {period_expr} AS period,
-                   SUM(spend) spend, SUM(clicks) clicks, SUM(impressions) impressions
-            FROM insights_daily
-            WHERE date BETWEEN ? AND ?
-            GROUP BY period
-            ORDER BY period
-            """,
-            (since, until),
-        ).fetchall()
-        leads_by_period = _fetch_leads_by_period(conn, since, until, granularity)
+        rows = conn.execute(sql, params).fetchall()
+        # Leads diarios/semanales/mensuales desde HubSpot (atribuidos a Meta)
+        since_iso = _date_to_hubspot_iso(since)
+        until_iso = _date_to_hubspot_iso(until, end=True)
+        leads_by_period = _hubspot_leads_by_period(
+            conn, since_iso, until_iso, granularity,
+            source=HUBSPOT_META_SOURCE, country=country,
+        )
 
     series = []
     for r in rows:
@@ -192,25 +263,30 @@ def api_timeseries():
 
 @app.route("/api/campaigns")
 def api_campaigns():
-    """Tabla de campanas con metricas agregadas en el rango."""
+    """Tabla de campanas con metricas agregadas en el rango.
+
+    Nota: los leads y CPL aqui vienen de Meta API (no HubSpot) porque no podemos
+    atribuir un contacto HubSpot a una campana Meta concreta sin UTM tracking.
+    """
     days_param = request.args.get("days", "30")
+    country = request.args.get("country") or None
     since, until, days = _resolve_range(days_param)
+
+    sql = (
+        "SELECT c.id, c.name, c.effective_status, c.objective, c.country, "
+        "SUM(i.spend) spend, SUM(i.impressions) impressions, "
+        "SUM(i.reach) reach, SUM(i.clicks) clicks "
+        "FROM campaigns c "
+        "LEFT JOIN insights_daily i ON i.campaign_id = c.id AND i.date BETWEEN ? AND ? "
+    )
+    params = [since, until]
+    if country:
+        sql += "WHERE c.country = ? "
+        params.append(country)
+    sql += "GROUP BY c.id ORDER BY spend DESC NULLS LAST"
+
     with _get_conn() as conn:
-        rows = conn.execute(
-            """
-            SELECT c.id, c.name, c.effective_status, c.objective,
-                   SUM(i.spend) spend,
-                   SUM(i.impressions) impressions,
-                   SUM(i.reach) reach,
-                   SUM(i.clicks) clicks
-            FROM campaigns c
-            LEFT JOIN insights_daily i
-              ON i.campaign_id = c.id AND i.date BETWEEN ? AND ?
-            GROUP BY c.id
-            ORDER BY spend DESC NULLS LAST
-            """,
-            (since, until),
-        ).fetchall()
+        rows = conn.execute(sql, params).fetchall()
         leads_by_campaign = _fetch_leads_by_campaign(conn, since, until)
 
     out = []
@@ -225,6 +301,7 @@ def api_campaigns():
                 "name": r["name"],
                 "status": r["effective_status"],
                 "objective": r["objective"],
+                "country": r["country"],
                 "spend": round(spend, 2),
                 "impressions": impressions,
                 "reach": r["reach"] or 0,
@@ -251,10 +328,7 @@ def api_sync():
 # ====================================================================
 # HubSpot endpoints
 # ====================================================================
-
-# Fuente de captacion considerada "Meta" en HubSpot
-HUBSPOT_META_SOURCE = "Redes Sociales - IG/FB"
-HUBSPOT_GOOGLE_SOURCE = "Web - Google Ads"
+# (HUBSPOT_META_SOURCE y HUBSPOT_GOOGLE_SOURCE ya definidas arriba)
 
 
 def _hubspot_date_range(days_param):
@@ -282,40 +356,55 @@ def _hubspot_date_range(days_param):
 
 @app.route("/api/hubspot/kpis")
 def api_hubspot_kpis():
-    """KPIs principales de HubSpot en el rango (createdate del contacto)."""
+    """KPIs principales de HubSpot en el rango (createdate del contacto). Filtro pais opcional."""
     days_param = request.args.get("days", "30")
+    country = request.args.get("country") or None
     since, until = _hubspot_date_range(days_param)
 
+    # Cuando hay filtro de pais, anadimos la condicion al WHERE de cada query
+    pais_clause = " AND pais = ?" if country else ""
+    pais_clause_c = " AND c.pais = ?" if country else ""
+    pais_params = [country] if country else []
+
     with _get_conn() as conn:
-        # Contactos creados en el rango
         contacts_total = conn.execute(
-            "SELECT COUNT(*) c FROM hubspot_contacts WHERE createdate BETWEEN ? AND ?",
-            (since, until),
+            f"SELECT COUNT(*) c FROM hubspot_contacts WHERE createdate BETWEEN ? AND ?{pais_clause}",
+            [since, until, *pais_params],
         ).fetchone()["c"]
 
-        # Contactos por fuente Meta y Google
         contacts_meta = conn.execute(
-            "SELECT COUNT(*) c FROM hubspot_contacts WHERE createdate BETWEEN ? AND ? "
-            "AND fuentes_de_captacion_especificas = ?",
-            (since, until, HUBSPOT_META_SOURCE),
+            f"SELECT COUNT(*) c FROM hubspot_contacts WHERE createdate BETWEEN ? AND ? "
+            f"AND fuentes_de_captacion_especificas = ?{pais_clause}",
+            [since, until, HUBSPOT_META_SOURCE, *pais_params],
         ).fetchone()["c"]
         contacts_google = conn.execute(
-            "SELECT COUNT(*) c FROM hubspot_contacts WHERE createdate BETWEEN ? AND ? "
-            "AND fuentes_de_captacion_especificas = ?",
-            (since, until, HUBSPOT_GOOGLE_SOURCE),
+            f"SELECT COUNT(*) c FROM hubspot_contacts WHERE createdate BETWEEN ? AND ? "
+            f"AND fuentes_de_captacion_especificas = ?{pais_clause}",
+            [since, until, HUBSPOT_GOOGLE_SOURCE, *pais_params],
         ).fetchone()["c"]
 
-        # Deals ganados (por createdate del deal, no closedate, para alinear con el resto)
-        deals_won_row = conn.execute(
-            "SELECT COUNT(*) c, COALESCE(SUM(amount), 0) revenue FROM hubspot_deals "
-            "WHERE is_won = 1 AND createdate BETWEEN ? AND ?",
-            (since, until),
-        ).fetchone()
+        # Deals ganados: filtramos solo si hay pais via JOIN al contacto principal
+        if country:
+            deals_won_row = conn.execute(
+                """
+                SELECT COUNT(DISTINCT d.id) c, COALESCE(SUM(d.amount),0) revenue
+                FROM hubspot_deals d
+                JOIN hubspot_deal_contacts dc ON dc.deal_id = d.id
+                JOIN hubspot_contacts c ON c.id = dc.contact_id
+                WHERE d.is_won = 1 AND d.createdate BETWEEN ? AND ? AND c.pais = ?
+                """,
+                (since, until, country),
+            ).fetchone()
+        else:
+            deals_won_row = conn.execute(
+                "SELECT COUNT(*) c, COALESCE(SUM(amount), 0) revenue FROM hubspot_deals "
+                "WHERE is_won = 1 AND createdate BETWEEN ? AND ?",
+                (since, until),
+            ).fetchone()
 
         # Revenue por fuente (cruce deal -> contacto)
         revenue_by_source = {}
-        for r in conn.execute(
-            """
+        rev_sql = """
             SELECT COALESCE(c.fuentes_de_captacion_especificas, '(sin atribucion)') src,
                    COALESCE(SUM(d.amount), 0) revenue,
                    COUNT(DISTINCT d.id) deals
@@ -323,13 +412,15 @@ def api_hubspot_kpis():
             LEFT JOIN hubspot_deal_contacts dc ON dc.deal_id = d.id
             LEFT JOIN hubspot_contacts c ON c.id = dc.contact_id
             WHERE d.is_won = 1 AND d.createdate BETWEEN ? AND ?
-            GROUP BY c.fuentes_de_captacion_especificas
-            """,
-            (since, until),
-        ):
+        """
+        rev_params = [since, until]
+        if country:
+            rev_sql += " AND c.pais = ?"
+            rev_params.append(country)
+        rev_sql += " GROUP BY c.fuentes_de_captacion_especificas"
+        for r in conn.execute(rev_sql, rev_params):
             revenue_by_source[r["src"]] = {"revenue": round(r["revenue"], 2), "deals": r["deals"]}
 
-        # Ultimo sync HubSpot OK
         last_sync = conn.execute(
             "SELECT finished_at FROM hubspot_sync_log WHERE status = 'ok' ORDER BY id DESC LIMIT 1"
         ).fetchone()
@@ -342,6 +433,7 @@ def api_hubspot_kpis():
     return jsonify({
         "since": since[:10],
         "until": until[:10],
+        "country": country,
         "contacts_total": contacts_total,
         "contacts_meta": contacts_meta,
         "contacts_google": contacts_google,
@@ -358,31 +450,51 @@ def api_hubspot_kpis():
 
 @app.route("/api/hubspot/funnel")
 def api_hubspot_funnel():
-    """Funnel completo Meta: spend -> leads Meta -> contactos HS -> ganados HS -> revenue."""
+    """Funnel completo Meta: spend -> leads Meta API -> contactos HS -> ganados -> revenue.
+
+    Si se pasa country, filtra Meta side por campaigns.country y HubSpot side por contacts.pais.
+    """
     days_param = request.args.get("days", "30")
+    country = request.args.get("country") or None
     since_meta, until_meta, _days = _resolve_range(days_param)
     since_hs, until_hs = _hubspot_date_range(days_param)
 
     with _get_conn() as conn:
-        # Meta side
-        r = conn.execute(
-            "SELECT COALESCE(SUM(spend),0) spend FROM insights_daily WHERE date BETWEEN ? AND ?",
-            (since_meta, until_meta),
-        ).fetchone()
+        # Meta spend (filtrado por country)
+        sql = (
+            "SELECT COALESCE(SUM(i.spend),0) spend FROM insights_daily i "
+            "JOIN campaigns c ON c.id = i.campaign_id WHERE i.date BETWEEN ? AND ?"
+        )
+        params = [since_meta, until_meta]
+        if country:
+            sql += " AND c.country = ?"
+            params.append(country)
+        r = conn.execute(sql, params).fetchone()
         meta_spend = round(r["spend"], 2)
 
-        meta_leads = sum(_fetch_leads_by_campaign(conn, since_meta, until_meta).values())
+        # Meta leads de la API (filtrado por country)
+        if country:
+            placeholders = ",".join("?" for _ in LEAD_ACTION_TYPES)
+            ml = conn.execute(
+                f"""
+                SELECT COALESCE(SUM(a.value),0) leads
+                FROM actions_daily a
+                JOIN campaigns c ON c.id = a.campaign_id
+                WHERE a.date BETWEEN ? AND ? AND a.action_type IN ({placeholders}) AND c.country = ?
+                """,
+                (since_meta, until_meta, *LEAD_ACTION_TYPES, country),
+            ).fetchone()
+            meta_leads = int(ml["leads"] or 0)
+        else:
+            meta_leads = sum(_fetch_leads_by_campaign(conn, since_meta, until_meta).values())
 
-        # HubSpot side - solo Meta source
-        contacts_meta = conn.execute(
-            "SELECT COUNT(*) c FROM hubspot_contacts WHERE createdate BETWEEN ? AND ? "
-            "AND fuentes_de_captacion_especificas = ?",
-            (since_hs, until_hs, HUBSPOT_META_SOURCE),
-        ).fetchone()["c"]
+        # HubSpot - contactos atribuidos a Meta (con country opcional)
+        contacts_meta = _count_hubspot_leads(
+            conn, since_hs, until_hs, source=HUBSPOT_META_SOURCE, country=country
+        )
 
         # Contactos Meta ganados (lead_status terminal positivo)
-        contacts_meta_won = conn.execute(
-            """
+        sql = """
             SELECT COUNT(*) c FROM hubspot_contacts
             WHERE createdate BETWEEN ? AND ?
               AND fuentes_de_captacion_especificas = ?
@@ -391,13 +503,15 @@ def api_hubspot_funnel():
                 'Terminado | Proyecto ganado',
                 'Terminado | Distribuidor convertido en cliente'
               )
-            """,
-            (since_hs, until_hs, HUBSPOT_META_SOURCE),
-        ).fetchone()["c"]
+        """
+        params = [since_hs, until_hs, HUBSPOT_META_SOURCE]
+        if country:
+            sql += " AND pais = ?"
+            params.append(country)
+        contacts_meta_won = conn.execute(sql, params).fetchone()["c"]
 
         # Revenue Meta (deals won asociados a contactos Meta)
-        rev = conn.execute(
-            """
+        sql = """
             SELECT COALESCE(SUM(d.amount), 0) revenue, COUNT(DISTINCT d.id) deals
             FROM hubspot_deals d
             JOIN hubspot_deal_contacts dc ON dc.deal_id = d.id
@@ -405,9 +519,12 @@ def api_hubspot_funnel():
             WHERE d.is_won = 1
               AND d.createdate BETWEEN ? AND ?
               AND c.fuentes_de_captacion_especificas = ?
-            """,
-            (since_hs, until_hs, HUBSPOT_META_SOURCE),
-        ).fetchone()
+        """
+        params = [since_hs, until_hs, HUBSPOT_META_SOURCE]
+        if country:
+            sql += " AND c.pais = ?"
+            params.append(country)
+        rev = conn.execute(sql, params).fetchone()
         revenue_meta = round(rev["revenue"], 2)
         deals_meta = rev["deals"]
 
@@ -418,6 +535,7 @@ def api_hubspot_funnel():
     return jsonify({
         "since": since_meta,
         "until": until_meta,
+        "country": country,
         "stages": [
             {"label": "Spend Meta", "value": meta_spend, "unit": "EUR"},
             {"label": "Leads Meta (API)", "value": meta_leads, "unit": ""},
@@ -434,44 +552,46 @@ def api_hubspot_funnel():
 
 @app.route("/api/hubspot/by-source")
 def api_hubspot_by_source():
-    """Distribucion de contactos y revenue por fuente de captacion."""
+    """Distribucion de contactos y revenue por fuente de captacion. Filtro country opcional."""
     days_param = request.args.get("days", "30")
+    country = request.args.get("country") or None
     since, until = _hubspot_date_range(days_param)
 
+    pais_clause = " AND pais = ?" if country else ""
+    pais_clause_c = " AND c.pais = ?" if country else ""
+    pais_params = [country] if country else []
+
     with _get_conn() as conn:
-        # Contactos por fuente
         rows = conn.execute(
-            """
+            f"""
             SELECT COALESCE(fuentes_de_captacion_especificas, '(sin atribucion)') fuente,
                    COUNT(*) contactos
             FROM hubspot_contacts
-            WHERE createdate BETWEEN ? AND ?
+            WHERE createdate BETWEEN ? AND ?{pais_clause}
             GROUP BY fuentes_de_captacion_especificas
             ORDER BY contactos DESC
             """,
-            (since, until),
+            [since, until, *pais_params],
         ).fetchall()
         contacts_by_source = {r["fuente"]: r["contactos"] for r in rows}
 
-        # Revenue por fuente (deal -> contacto)
         rev_rows = conn.execute(
-            """
+            f"""
             SELECT COALESCE(c.fuentes_de_captacion_especificas, '(sin atribucion)') fuente,
                    COALESCE(SUM(d.amount), 0) revenue,
                    COUNT(DISTINCT d.id) deals
             FROM hubspot_deals d
             LEFT JOIN hubspot_deal_contacts dc ON dc.deal_id = d.id
             LEFT JOIN hubspot_contacts c ON c.id = dc.contact_id
-            WHERE d.is_won = 1 AND d.createdate BETWEEN ? AND ?
+            WHERE d.is_won = 1 AND d.createdate BETWEEN ? AND ?{pais_clause_c}
             GROUP BY c.fuentes_de_captacion_especificas
             """,
-            (since, until),
+            [since, until, *pais_params],
         ).fetchall()
         revenue_by_source = {r["fuente"]: {"revenue": round(r["revenue"], 2), "deals": r["deals"]} for r in rev_rows}
 
-        # Contactos ganados por fuente (estados terminales positivos)
         won_rows = conn.execute(
-            """
+            f"""
             SELECT COALESCE(fuentes_de_captacion_especificas, '(sin atribucion)') fuente,
                    COUNT(*) ganados
             FROM hubspot_contacts
@@ -480,10 +600,10 @@ def api_hubspot_by_source():
                 'Terminado | Compra Web',
                 'Terminado | Proyecto ganado',
                 'Terminado | Distribuidor convertido en cliente'
-              )
+              ){pais_clause}
             GROUP BY fuentes_de_captacion_especificas
             """,
-            (since, until),
+            [since, until, *pais_params],
         ).fetchall()
         won_by_source = {r["fuente"]: r["ganados"] for r in won_rows}
 
@@ -505,22 +625,42 @@ def api_hubspot_by_source():
 
 @app.route("/api/hubspot/by-status")
 def api_hubspot_by_status():
-    """Distribucion de contactos por hs_lead_status."""
+    """Distribucion de contactos por hs_lead_status. Filtro country opcional."""
     days_param = request.args.get("days", "30")
+    country = request.args.get("country") or None
     since, until = _hubspot_date_range(days_param)
+
+    pais_clause = " AND pais = ?" if country else ""
+    pais_params = [country] if country else []
 
     with _get_conn() as conn:
         rows = conn.execute(
-            """
+            f"""
             SELECT COALESCE(hs_lead_status, '(sin estado)') estado, COUNT(*) c
             FROM hubspot_contacts
-            WHERE createdate BETWEEN ? AND ?
+            WHERE createdate BETWEEN ? AND ?{pais_clause}
             GROUP BY hs_lead_status
             ORDER BY c DESC
             """,
-            (since, until),
+            [since, until, *pais_params],
         ).fetchall()
     return jsonify([{"estado": r["estado"], "contactos": r["c"]} for r in rows])
+
+
+@app.route("/api/countries")
+def api_countries():
+    """Devuelve la lista de paises disponibles (en campaigns + en hubspot_contacts)."""
+    with _get_conn() as conn:
+        from_campaigns = {r["country"] for r in conn.execute(
+            "SELECT DISTINCT country FROM campaigns WHERE country IS NOT NULL AND country != ''"
+        ).fetchall()}
+        from_hubspot = {r["pais"] for r in conn.execute(
+            "SELECT DISTINCT pais FROM hubspot_contacts WHERE pais IS NOT NULL AND pais != ''"
+        ).fetchall()}
+    # Priorizar SUPPORTED_COUNTRIES en orden, luego anadir cualquier extra que tenga datos
+    available = {c for c in (from_campaigns | from_hubspot) if c}
+    ordered = [c for c in SUPPORTED_COUNTRIES if c in available] + sorted(c for c in available if c not in SUPPORTED_COUNTRIES)
+    return jsonify(ordered)
 
 
 @app.route("/api/hubspot/by-country")

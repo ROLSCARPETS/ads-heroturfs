@@ -65,6 +65,27 @@ h1, h2, h3 { font-weight: 600; letter-spacing: -0.01em; }
     gap: 12px;
 }
 
+/* === Country selector === */
+.country-selector {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 7px 14px;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text);
+    cursor: pointer;
+    font-family: inherit;
+    min-width: 160px;
+    transition: border-color 0.15s, box-shadow 0.15s;
+}
+.country-selector:hover { border-color: var(--accent); }
+.country-selector:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(37,99,235,0.1); }
+.country-selector:not([value=""]):not(:has(option[value=""]:checked)) {
+    background: linear-gradient(135deg, #fff, #eff6ff);
+    border-color: var(--accent);
+}
+
 /* === Range selector === */
 .range-selector {
     display: inline-flex;
@@ -72,6 +93,21 @@ h1, h2, h3 { font-weight: 600; letter-spacing: -0.01em; }
     border: 1px solid var(--border);
     border-radius: var(--radius-sm);
     padding: 2px;
+}
+
+/* === Indicador de fuente en KPI label === */
+.kpi-source {
+    display: inline-block;
+    font-size: 9px;
+    font-weight: 700;
+    background: #ede9fe;
+    color: #6d28d9;
+    padding: 1px 5px;
+    border-radius: 4px;
+    margin-left: 4px;
+    vertical-align: middle;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
 }
 
 .range-btn {

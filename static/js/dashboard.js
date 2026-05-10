@@ -3,10 +3,19 @@
 const state = {
     days: 30,
     granularity: 'daily',
+    country: '',  // vacio = todos los paises
     campaigns: [],
     sortBy: 'spend',
     sortDir: 'desc',
 };
+
+function buildQuery(extra = {}) {
+    const params = new URLSearchParams();
+    params.set('days', state.days);
+    if (state.country) params.set('country', state.country);
+    Object.entries(extra).forEach(([k, v]) => params.set(k, v));
+    return params.toString();
+}
 
 const MONTH_NAMES_ES = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
 
@@ -28,48 +37,21 @@ function toast(msg, type = '') {
 }
 
 // === API calls ===
-async function fetchKpis(days) {
-    const r = await fetch(`/api/kpis?days=${days}`);
-    if (!r.ok) throw new Error('KPIs API error');
-    return r.json();
-}
-async function fetchTimeseries(days, granularity) {
-    const r = await fetch(`/api/timeseries?days=${days}&granularity=${granularity}`);
-    if (!r.ok) throw new Error('Timeseries API error');
-    return r.json();
-}
-async function fetchCampaigns(days) {
-    const r = await fetch(`/api/campaigns?days=${days}`);
-    if (!r.ok) throw new Error('Campaigns API error');
+async function fetchJson(path) {
+    const r = await fetch(path);
+    if (!r.ok) throw new Error(`API ${path} -> ${r.status}`);
     return r.json();
 }
 
-// HubSpot APIs
-async function fetchHsKpis(days) {
-    const r = await fetch(`/api/hubspot/kpis?days=${days}`);
-    if (!r.ok) throw new Error('HS KPIs API error');
-    return r.json();
-}
-async function fetchHsFunnel(days) {
-    const r = await fetch(`/api/hubspot/funnel?days=${days}`);
-    if (!r.ok) throw new Error('HS Funnel API error');
-    return r.json();
-}
-async function fetchHsBySource(days) {
-    const r = await fetch(`/api/hubspot/by-source?days=${days}`);
-    if (!r.ok) throw new Error('HS BySource API error');
-    return r.json();
-}
-async function fetchHsByStatus(days) {
-    const r = await fetch(`/api/hubspot/by-status?days=${days}`);
-    if (!r.ok) throw new Error('HS ByStatus API error');
-    return r.json();
-}
-async function fetchHsByCountry(days) {
-    const r = await fetch(`/api/hubspot/by-country?days=${days}`);
-    if (!r.ok) throw new Error('HS ByCountry API error');
-    return r.json();
-}
+const fetchKpis = ()       => fetchJson(`/api/kpis?${buildQuery()}`);
+const fetchTimeseries = () => fetchJson(`/api/timeseries?${buildQuery({granularity: state.granularity})}`);
+const fetchCampaigns = ()  => fetchJson(`/api/campaigns?${buildQuery()}`);
+const fetchHsKpis = ()     => fetchJson(`/api/hubspot/kpis?${buildQuery()}`);
+const fetchHsFunnel = ()   => fetchJson(`/api/hubspot/funnel?${buildQuery()}`);
+const fetchHsBySource = () => fetchJson(`/api/hubspot/by-source?${buildQuery()}`);
+const fetchHsByStatus = () => fetchJson(`/api/hubspot/by-status?${buildQuery()}`);
+const fetchHsByCountry = ()=> fetchJson(`/api/hubspot/by-country?${buildQuery()}`);
+const fetchCountries = ()  => fetchJson('/api/countries');
 
 // === Render KPIs ===
 function renderKpis(k) {
@@ -437,14 +419,9 @@ function csvCell(v) {
 async function loadAll() {
     try {
         const [k, ts, cs, hsK, hsF, hsSrc, hsSt, hsCo] = await Promise.all([
-            fetchKpis(state.days),
-            fetchTimeseries(state.days, state.granularity),
-            fetchCampaigns(state.days),
-            fetchHsKpis(state.days),
-            fetchHsFunnel(state.days),
-            fetchHsBySource(state.days),
-            fetchHsByStatus(state.days),
-            fetchHsByCountry(state.days),
+            fetchKpis(), fetchTimeseries(), fetchCampaigns(),
+            fetchHsKpis(), fetchHsFunnel(), fetchHsBySource(),
+            fetchHsByStatus(), fetchHsByCountry(),
         ]);
         renderKpis(k);
         renderTimeseries(ts);
@@ -463,10 +440,25 @@ async function loadAll() {
 
 async function loadTimeseriesOnly() {
     try {
-        const ts = await fetchTimeseries(state.days, state.granularity);
+        const ts = await fetchTimeseries();
         renderTimeseries(ts);
     } catch (e) {
         toast('Error cargando grafico: ' + e.message, 'error');
+    }
+}
+
+async function loadCountrySelector() {
+    try {
+        const countries = await fetchCountries();
+        const sel = $('#country-selector');
+        // Mantener la opcion "Todos" y anadir el resto
+        const opts = ['<option value="">Todos los pa&iacute;ses</option>'];
+        countries.forEach(c => {
+            opts.push(`<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`);
+        });
+        sel.innerHTML = opts.join('');
+    } catch (e) {
+        console.error('No se pudo cargar lista de paises:', e);
     }
 }
 
@@ -530,7 +522,14 @@ function init() {
     $('#btn-sync-hs').addEventListener('click', doSyncHs);
     $('#btn-export').addEventListener('click', exportCsv);
 
+    // Selector de pais
+    $('#country-selector').addEventListener('change', (e) => {
+        state.country = e.target.value;
+        loadAll();
+    });
+
     setupTableSort();
+    loadCountrySelector();
     loadAll();
 }
 

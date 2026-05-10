@@ -21,6 +21,7 @@ import requests
 from dotenv import load_dotenv
 
 import db
+from campaign_country import country_for_campaign
 
 load_dotenv()
 
@@ -120,7 +121,8 @@ def sync(since=None, until=None):
         print(f"      {len(campaigns)} campanas encontradas")
         with db.get_conn() as conn:
             for c in campaigns:
-                db.upsert_campaign(conn, c)
+                country = country_for_campaign(c.get("name"))
+                db.upsert_campaign(conn, c, country=country)
                 campaigns_count += 1
 
         # 2. Insights diarios

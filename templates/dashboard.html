@@ -14,6 +14,9 @@
             <span class="subtitle">Meta Ads + HubSpot CRM</span>
         </div>
         <div class="topbar-right">
+            <select id="country-selector" class="country-selector" title="Filtrar por pais">
+                <option value="">Todos los pa&iacute;ses</option>
+            </select>
             <div class="range-selector" role="tablist">
                 <button class="range-btn" data-days="7">7 d&iacute;as</button>
                 <button class="range-btn active" data-days="30">30 d&iacute;as</button>
@@ -71,11 +74,11 @@
                 <div class="kpi-unit">EUR</div>
             </div>
             <div class="kpi-card kpi-leads">
-                <div class="kpi-label">Leads</div>
+                <div class="kpi-label">Leads <span class="kpi-source">HubSpot</span></div>
                 <div class="kpi-value" id="kpi-leads">-</div>
             </div>
             <div class="kpi-card kpi-cpl">
-                <div class="kpi-label">CPL</div>
+                <div class="kpi-label">CPL <span class="kpi-source">HubSpot</span></div>
                 <div class="kpi-value" id="kpi-cpl">-</div>
                 <div class="kpi-unit">EUR</div>
             </div>

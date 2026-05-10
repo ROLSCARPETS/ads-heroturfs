@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS campaigns (
     created_time    TEXT,
     start_time      TEXT,
     stop_time       TEXT,
+    country         TEXT,
     updated_at      TEXT
 );
 
@@ -166,15 +167,24 @@ def get_conn():
 def init_db():
     with get_conn() as conn:
         conn.executescript(SCHEMA)
+        _migrate(conn)
 
 
-def upsert_campaign(conn, c):
+def _migrate(conn):
+    """Migraciones idempotentes para BBDD ya creadas antes de cambios de schema."""
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(campaigns)").fetchall()}
+    if "country" not in cols:
+        conn.execute("ALTER TABLE campaigns ADD COLUMN country TEXT")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_campaigns_country ON campaigns(country)")
+
+
+def upsert_campaign(conn, c, country=None):
     conn.execute(
         """
         INSERT INTO campaigns (id, name, status, effective_status, objective,
                                daily_budget, lifetime_budget, created_time,
-                               start_time, stop_time, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+                               start_time, stop_time, country, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
         ON CONFLICT(id) DO UPDATE SET
             name = excluded.name,
             status = excluded.status,
@@ -184,6 +194,7 @@ def upsert_campaign(conn, c):
             lifetime_budget = excluded.lifetime_budget,
             start_time = excluded.start_time,
             stop_time = excluded.stop_time,
+            country = excluded.country,
             updated_at = datetime('now')
         """,
         (
@@ -197,6 +208,7 @@ def upsert_campaign(conn, c):
             c.get("created_time"),
             c.get("start_time"),
             c.get("stop_time"),
+            country,
         ),
     )
 
