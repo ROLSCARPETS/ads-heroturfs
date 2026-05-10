@@ -43,9 +43,10 @@ const COUNTRY_ISO = {
 function flagImg(country, size = 'small') {
     const iso = COUNTRY_ISO[country];
     if (!iso) return '<span class="flag-fallback">🌐</span>';
-    // Usamos SVG de flagcdn.com (CDN publico). w40 = 40px width PNG, .svg = vectorial
+    // SVGs servidas localmente desde /static/flags/ (sin dependencia de internet).
+    // Para anadir nuevos paises: ejecutar static/flags/_download_flags.py.
     const cls = size === 'big' ? 'flag-img flag-big' : 'flag-img';
-    return `<img src="https://flagcdn.com/${iso}.svg" class="${cls}" alt="${escapeHtml(country)}" loading="lazy">`;
+    return `<img src="/static/flags/${iso}.svg" class="${cls}" alt="${escapeHtml(country)}" loading="lazy">`;
 }
 
 const $ = (sel) => document.querySelector(sel);
