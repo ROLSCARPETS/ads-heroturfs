@@ -75,10 +75,12 @@ h1, h2, h3 { font-weight: 600; letter-spacing: -0.01em; }
     font-weight: 500;
     color: var(--text);
     cursor: pointer;
-    font-family: inherit;
-    min-width: 160px;
+    font-family: -apple-system, "Segoe UI", "Apple Color Emoji", "Segoe UI Emoji", sans-serif;
+    min-width: 200px;
     transition: border-color 0.15s, box-shadow 0.15s;
 }
+.country-selector option { font-family: -apple-system, "Segoe UI", "Apple Color Emoji", "Segoe UI Emoji", sans-serif; }
+.flag { display: inline-block; margin-right: 4px; }
 .country-selector:hover { border-color: var(--accent); }
 .country-selector:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(37,99,235,0.1); }
 .country-selector:not([value=""]):not(:has(option[value=""]:checked)) {

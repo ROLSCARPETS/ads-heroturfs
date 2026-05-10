@@ -20,6 +20,27 @@ function buildQuery(extra = {}) {
 
 const MONTH_NAMES_ES = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
 
+// Banderas (emoji Unicode) por pais. Usadas en el selector y en la tabla de paises.
+const COUNTRY_FLAGS = {
+    "España": "🇪🇸", "Francia": "🇫🇷", "Italia": "🇮🇹", "Reino Unido": "🇬🇧",
+    "Alemania": "🇩🇪", "Bélgica": "🇧🇪", "Luxemburgo": "🇱🇺", "Portugal": "🇵🇹",
+    "Estados Unidos": "🇺🇸", "Afganistán": "🇦🇫", "Albania": "🇦🇱", "Andorra": "🇦🇩",
+    "Argentina": "🇦🇷", "Austria": "🇦🇹", "Brasil": "🇧🇷", "Bulgaria": "🇧🇬",
+    "Canadá": "🇨🇦", "Catar": "🇶🇦", "Chequia": "🇨🇿", "Chile": "🇨🇱",
+    "Chipre": "🇨🇾", "Costa Rica": "🇨🇷", "Croacia": "🇭🇷", "Dinamarca": "🇩🇰",
+    "Emiratos Árabes Unidos": "🇦🇪", "Eslovaquia": "🇸🇰", "Eslovenia": "🇸🇮",
+    "Estonia": "🇪🇪", "Finlandia": "🇫🇮", "Grecia": "🇬🇷", "Hungría": "🇭🇺",
+    "India": "🇮🇳", "Irlanda": "🇮🇪", "Israel": "🇮🇱", "Kuwait": "🇰🇼",
+    "Lituania": "🇱🇹", "Malasia": "🇲🇾", "Marruecos": "🇲🇦", "México": "🇲🇽",
+    "Noruega": "🇳🇴", "Nueva Caledonia": "🇳🇨", "Nueva Zelanda": "🇳🇿",
+    "Países Bajos": "🇳🇱", "Perú": "🇵🇪", "Polonia": "🇵🇱", "Rumanía": "🇷🇴",
+    "San Marino": "🇸🇲", "Suecia": "🇸🇪", "Suiza": "🇨🇭", "Turquía": "🇹🇷",
+    "Ucrania": "🇺🇦", "Venezuela": "🇻🇪",
+    "Islas Ultramarinas Menores de Estados Unidos": "🇺🇸",
+};
+
+const flag = (country) => COUNTRY_FLAGS[country] || "🌍";
+
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => document.querySelectorAll(sel);
 
@@ -160,7 +181,7 @@ function renderHsByCountry(rows) {
     const tbody = $('#table-hs-country tbody');
     tbody.innerHTML = rows.map(r => `
         <tr>
-            <td>${escapeHtml(r.pais)}</td>
+            <td><span class="flag">${flag(r.pais)}</span> ${escapeHtml(r.pais)}</td>
             <td class="td-num">${fmtInt.format(r.contactos)}</td>
         </tr>
     `).join('');
@@ -515,10 +536,10 @@ async function loadCountrySelector() {
     try {
         const countries = await fetchCountries();
         const sel = $('#country-selector');
-        // Mantener la opcion "Todos" y anadir el resto
-        const opts = ['<option value="">Todos los pa&iacute;ses</option>'];
+        // Mantener la opcion "Todos" y anadir el resto con bandera
+        const opts = ['<option value="">🌍 Todos los países</option>'];
         countries.forEach(c => {
-            opts.push(`<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`);
+            opts.push(`<option value="${escapeHtml(c)}">${flag(c)} ${escapeHtml(c)}</option>`);
         });
         sel.innerHTML = opts.join('');
     } catch (e) {
