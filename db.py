@@ -1,4 +1,4 @@
-"""Capa de acceso a SQLite para los datos de Meta Ads + HubSpot CRM."""
+"""Capa de acceso a SQLite para los datos de Meta Ads + HubSpot CRM + Google Ads."""
 
 import sqlite3
 from contextlib import contextmanager
@@ -147,6 +147,49 @@ CREATE INDEX IF NOT EXISTS idx_hs_deals_won         ON hubspot_deals(is_won);
 CREATE INDEX IF NOT EXISTS idx_hs_deals_created     ON hubspot_deals(createdate);
 CREATE INDEX IF NOT EXISTS idx_hs_deals_closed      ON hubspot_deals(closedate);
 CREATE INDEX IF NOT EXISTS idx_hs_deal_contacts_c   ON hubspot_deal_contacts(contact_id);
+
+-- ====================================================================
+-- Google Ads
+-- ====================================================================
+
+CREATE TABLE IF NOT EXISTS google_campaigns (
+    id                          TEXT PRIMARY KEY,
+    name                        TEXT,
+    status                      TEXT,
+    advertising_channel_type    TEXT,        -- SEARCH, PERFORMANCE_MAX, DISPLAY, ...
+    start_date                  TEXT,
+    end_date                    TEXT,
+    country                     TEXT,
+    updated_at                  TEXT
+);
+
+CREATE TABLE IF NOT EXISTS google_insights_daily (
+    campaign_id         TEXT NOT NULL,
+    date                TEXT NOT NULL,
+    impressions         INTEGER,
+    clicks              INTEGER,
+    cost                REAL,            -- EUR (ya convertido desde cost_micros)
+    conversions         REAL,
+    conversion_value    REAL,            -- EUR
+    ctr                 REAL,            -- %
+    cpc                 REAL,            -- EUR
+    cpm                 REAL,            -- EUR
+    PRIMARY KEY (campaign_id, date)
+);
+
+CREATE TABLE IF NOT EXISTS google_sync_log (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    started_at      TEXT NOT NULL,
+    finished_at     TEXT,
+    days_back       INTEGER,
+    campaigns_count INTEGER,
+    insights_count  INTEGER,
+    status          TEXT,
+    error           TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_g_insights_date    ON google_insights_daily(date);
+CREATE INDEX IF NOT EXISTS idx_g_campaigns_country ON google_campaigns(country);
 """
 
 
@@ -436,6 +479,91 @@ def log_hubspot_sync_finish(conn, sync_id, contacts, deals, pipelines, associati
         WHERE id = ?
         """,
         (contacts, deals, pipelines, associations, status, error, sync_id),
+    )
+
+
+# ====================================================================
+# Google Ads upserts
+# ====================================================================
+
+def upsert_google_campaign(conn, c, country=None):
+    conn.execute(
+        """
+        INSERT INTO google_campaigns (id, name, status, advertising_channel_type,
+                                       start_date, end_date, country, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
+        ON CONFLICT(id) DO UPDATE SET
+            name = excluded.name,
+            status = excluded.status,
+            advertising_channel_type = excluded.advertising_channel_type,
+            start_date = excluded.start_date,
+            end_date = excluded.end_date,
+            country = excluded.country,
+            updated_at = datetime('now')
+        """,
+        (
+            c.get("id"),
+            c.get("name"),
+            c.get("status"),
+            c.get("advertising_channel_type"),
+            c.get("start_date"),
+            c.get("end_date"),
+            country,
+        ),
+    )
+
+
+def upsert_google_insight(conn, row):
+    conn.execute(
+        """
+        INSERT INTO google_insights_daily (campaign_id, date, impressions, clicks,
+                                            cost, conversions, conversion_value,
+                                            ctr, cpc, cpm)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(campaign_id, date) DO UPDATE SET
+            impressions = excluded.impressions,
+            clicks = excluded.clicks,
+            cost = excluded.cost,
+            conversions = excluded.conversions,
+            conversion_value = excluded.conversion_value,
+            ctr = excluded.ctr,
+            cpc = excluded.cpc,
+            cpm = excluded.cpm
+        """,
+        (
+            row["campaign_id"],
+            row["date"],
+            _to_int(row.get("impressions")),
+            _to_int(row.get("clicks")),
+            _to_float(row.get("cost")),
+            _to_float(row.get("conversions")),
+            _to_float(row.get("conversion_value")),
+            _to_float(row.get("ctr")),
+            _to_float(row.get("cpc")),
+            _to_float(row.get("cpm")),
+        ),
+    )
+
+
+def log_google_sync_start(conn, days_back=None):
+    cur = conn.execute(
+        "INSERT INTO google_sync_log (started_at, days_back, status) "
+        "VALUES (datetime('now'), ?, 'running')",
+        (days_back,),
+    )
+    return cur.lastrowid
+
+
+def log_google_sync_finish(conn, sync_id, campaigns_count, insights_count, status, error=None):
+    conn.execute(
+        """
+        UPDATE google_sync_log
+        SET finished_at = datetime('now'),
+            campaigns_count = ?, insights_count = ?,
+            status = ?, error = ?
+        WHERE id = ?
+        """,
+        (campaigns_count, insights_count, status, error, sync_id),
     )
 
 

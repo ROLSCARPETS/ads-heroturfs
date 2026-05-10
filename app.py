@@ -11,9 +11,16 @@ import hubspot_sync
 import meta_sync
 from campaign_country import SUPPORTED_COUNTRIES
 
+# google_sync se importa lazy en el endpoint /api/google/sync para no
+# fallar si las dependencias de google-ads aun no estan instaladas
+# o si falta el Developer Token (en aprobacion).
+
 app = Flask(__name__)
 app.config["TEMPLATES_AUTO_RELOAD"] = True
 app.jinja_env.auto_reload = True
+
+# Asegurar que las tablas existen (idempotente, corre migraciones si las hay).
+db.init_db()
 
 LEAD_ACTION_TYPES = (
     "lead",
@@ -649,16 +656,18 @@ def api_hubspot_by_status():
 
 @app.route("/api/countries")
 def api_countries():
-    """Devuelve la lista de paises disponibles (en campaigns + en hubspot_contacts)."""
+    """Devuelve la lista de paises disponibles (campaigns Meta + Google + hubspot_contacts)."""
     with _get_conn() as conn:
-        from_campaigns = {r["country"] for r in conn.execute(
+        from_meta = {r["country"] for r in conn.execute(
             "SELECT DISTINCT country FROM campaigns WHERE country IS NOT NULL AND country != ''"
+        ).fetchall()}
+        from_google = {r["country"] for r in conn.execute(
+            "SELECT DISTINCT country FROM google_campaigns WHERE country IS NOT NULL AND country != ''"
         ).fetchall()}
         from_hubspot = {r["pais"] for r in conn.execute(
             "SELECT DISTINCT pais FROM hubspot_contacts WHERE pais IS NOT NULL AND pais != ''"
         ).fetchall()}
-    # Priorizar SUPPORTED_COUNTRIES en orden, luego anadir cualquier extra que tenga datos
-    available = {c for c in (from_campaigns | from_hubspot) if c}
+    available = {c for c in (from_meta | from_google | from_hubspot) if c}
     ordered = [c for c in SUPPORTED_COUNTRIES if c in available] + sorted(c for c in available if c not in SUPPORTED_COUNTRIES)
     return jsonify(ordered)
 
@@ -757,6 +766,7 @@ def api_weekly():
 
     # Inicializar buckets
     spend_meta = [0.0] * n
+    spend_google = [0.0] * n
     leads_meta = [0] * n
     leads_google = [0] * n
     leads_other = [0] * n
@@ -769,7 +779,7 @@ def api_weekly():
     pais_params = [country] if country else []
 
     with _get_conn() as conn:
-        # 1. Spend Meta por periodo (filtrado por country)
+        # 1a. Spend Meta por periodo (filtrado por country)
         sql = (
             f"SELECT {period_expr_meta} p, SUM(i.spend) s "
             "FROM insights_daily i JOIN campaigns c ON c.id = i.campaign_id "
@@ -784,6 +794,22 @@ def api_weekly():
             i = period_idx.get(r["p"])
             if i is not None:
                 spend_meta[i] = r["s"] or 0
+
+        # 1b. Spend Google por periodo (filtrado por country)
+        sql_g = (
+            f"SELECT {period_expr_meta} p, SUM(i.cost) s "
+            "FROM google_insights_daily i JOIN google_campaigns c ON c.id = i.campaign_id "
+            "WHERE i.date BETWEEN ? AND ?"
+        )
+        params_g = [since, until]
+        if country:
+            sql_g += " AND c.country = ?"
+            params_g.append(country)
+        sql_g += " GROUP BY p"
+        for r in conn.execute(sql_g, params_g):
+            i = period_idx.get(r["p"])
+            if i is not None:
+                spend_google[i] = r["s"] or 0
 
         # 2. Leads HubSpot por periodo y fuente
         sql = (
@@ -843,7 +869,6 @@ def api_weekly():
 
     # Calcular metricas derivadas
     leads_total = [leads_meta[i] + leads_google[i] + leads_other[i] for i in range(n)]
-    spend_google = [0.0] * n  # Pendiente integracion Google Ads API
     spend_total = [spend_meta[i] + spend_google[i] for i in range(n)]
     cpl_total = [(spend_total[i] / leads_total[i]) if leads_total[i] else 0 for i in range(n)]
     cpl_meta = [(spend_meta[i] / leads_meta[i]) if leads_meta[i] else 0 for i in range(n)]
@@ -879,8 +904,7 @@ def api_weekly():
             "rows": [
                 row("Inversión total", spend_total, sum_spend_total, "eur", header=True),
                 row("Meta Ads", spend_meta, sum_spend_meta, "eur", indent=True),
-                row("Google Ads", spend_google, sum_spend_google, "eur", indent=True,
-                    note="Pendiente de integrar Google Ads API"),
+                row("Google Ads", spend_google, sum_spend_google, "eur", indent=True),
             ],
         },
         {
@@ -927,6 +951,126 @@ def api_weekly():
         "totals_label": "Acumulado",
         "sections": sections,
     })
+
+
+# ====================================================================
+# Google Ads endpoints
+# ====================================================================
+
+@app.route("/api/google/kpis")
+def api_google_kpis():
+    """KPIs de Google Ads agregados en el rango. Filtro country opcional."""
+    days_param = request.args.get("days", "30")
+    country = request.args.get("country") or None
+    since, until, days = _resolve_range(days_param)
+
+    with _get_conn() as conn:
+        sql = (
+            "SELECT SUM(i.cost) cost, SUM(i.impressions) impressions, "
+            "SUM(i.clicks) clicks, SUM(i.conversions) conversions, "
+            "SUM(i.conversion_value) revenue "
+            "FROM google_insights_daily i JOIN google_campaigns c ON c.id = i.campaign_id "
+            "WHERE i.date BETWEEN ? AND ?"
+        )
+        params = [since, until]
+        if country:
+            sql += " AND c.country = ?"
+            params.append(country)
+        r = conn.execute(sql, params).fetchone()
+
+        last_sync = conn.execute(
+            "SELECT finished_at FROM google_sync_log WHERE status='ok' ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+
+    cost = r["cost"] or 0
+    impressions = r["impressions"] or 0
+    clicks = r["clicks"] or 0
+    conversions = r["conversions"] or 0
+    revenue = r["revenue"] or 0
+    ctr = (clicks / impressions * 100) if impressions else 0
+    cpc = (cost / clicks) if clicks else 0
+    cpm = (cost / impressions * 1000) if impressions else 0
+    roas = (revenue / cost) if cost else 0
+    cpa = (cost / conversions) if conversions else 0
+
+    return jsonify({
+        "since": since,
+        "until": until,
+        "days": days,
+        "country": country,
+        "cost": round(cost, 2),
+        "impressions": impressions,
+        "clicks": clicks,
+        "conversions": round(conversions, 2),
+        "revenue": round(revenue, 2),
+        "ctr": round(ctr, 2),
+        "cpc": round(cpc, 3),
+        "cpm": round(cpm, 2),
+        "roas": round(roas, 2),
+        "cpa": round(cpa, 2),
+        "last_sync": last_sync["finished_at"] if last_sync else None,
+    })
+
+
+@app.route("/api/google/campaigns")
+def api_google_campaigns():
+    """Tabla de campanas Google con metricas agregadas."""
+    days_param = request.args.get("days", "30")
+    country = request.args.get("country") or None
+    since, until, _days = _resolve_range(days_param)
+
+    sql = (
+        "SELECT c.id, c.name, c.status, c.advertising_channel_type, c.country, "
+        "SUM(i.cost) cost, SUM(i.impressions) impressions, "
+        "SUM(i.clicks) clicks, SUM(i.conversions) conversions, "
+        "SUM(i.conversion_value) revenue "
+        "FROM google_campaigns c "
+        "LEFT JOIN google_insights_daily i ON i.campaign_id = c.id AND i.date BETWEEN ? AND ? "
+    )
+    params = [since, until]
+    if country:
+        sql += "WHERE c.country = ? "
+        params.append(country)
+    sql += "GROUP BY c.id ORDER BY cost DESC NULLS LAST"
+
+    with _get_conn() as conn:
+        rows = conn.execute(sql, params).fetchall()
+
+    out = []
+    for r in rows:
+        cost = r["cost"] or 0
+        impressions = r["impressions"] or 0
+        clicks = r["clicks"] or 0
+        conversions = r["conversions"] or 0
+        revenue = r["revenue"] or 0
+        out.append({
+            "id": r["id"],
+            "name": r["name"],
+            "status": r["status"],
+            "channel_type": r["advertising_channel_type"],
+            "country": r["country"],
+            "cost": round(cost, 2),
+            "impressions": impressions,
+            "clicks": clicks,
+            "ctr": round((clicks / impressions * 100) if impressions else 0, 2),
+            "cpc": round((cost / clicks) if clicks else 0, 3),
+            "conversions": round(conversions, 2),
+            "revenue": round(revenue, 2),
+            "cpa": round((cost / conversions) if conversions else 0, 2),
+            "roas": round((revenue / cost) if cost else 0, 2),
+        })
+    return jsonify(out)
+
+
+@app.route("/api/google/sync", methods=["POST"])
+def api_google_sync():
+    """Lanza sync de Google Ads. Devuelve error si falta Developer Token."""
+    try:
+        import google_sync as gs
+        gs.sync()
+        return jsonify({"status": "ok"})
+    except Exception as e:
+        return jsonify({"status": "error", "error": str(e)}), 500
 
 
 @app.route("/api/hubspot/sync", methods=["POST"])

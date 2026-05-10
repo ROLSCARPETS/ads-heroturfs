@@ -347,6 +347,20 @@ h1, h2, h3 { font-weight: 600; letter-spacing: -0.01em; }
 .kpi-leads .kpi-value { color: var(--leads); }
 .kpi-cpl .kpi-value { color: var(--leads); }
 
+/* Google Ads KPIs */
+.kpi-google-cost .kpi-value { color: #f97316; }
+.kpi-google-conv .kpi-value { color: var(--success); }
+.kpi-google-revenue .kpi-value { color: var(--success); }
+.kpi-google-roas .kpi-value { color: var(--success); font-size: 28px; }
+.section-badge-google {
+    background: linear-gradient(135deg, #4285F4, #34A853);
+}
+.google-status-msg {
+    color: var(--warning);
+    font-size: 12px;
+    font-weight: 500;
+}
+
 /* HubSpot KPIs */
 .kpi-hs-contacts .kpi-value { color: #0ea5e9; }
 .kpi-hs-won .kpi-value { color: var(--success); }

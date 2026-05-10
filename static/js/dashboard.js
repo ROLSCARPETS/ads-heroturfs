@@ -83,6 +83,10 @@ const fetchHsByCountry = ()=> fetchJson(`/api/hubspot/by-country?${buildQuery()}
 const fetchCountries = ()  => fetchJson('/api/countries');
 const fetchWeekly = ()     => fetchJson(`/api/weekly?${buildQuery({granularity: state.weeklyGranularity})}`);
 
+// Google Ads APIs
+const fetchGoogleKpis = ()      => fetchJson(`/api/google/kpis?${buildQuery()}`);
+const fetchGoogleCampaigns = () => fetchJson(`/api/google/campaigns?${buildQuery()}`);
+
 // === Render KPIs ===
 function renderKpis(k) {
     $('#kpi-spend').textContent = fmtEur.format(k.spend);
@@ -448,11 +452,12 @@ function csvCell(v) {
 // === Carga principal ===
 async function loadAll() {
     try {
-        const [k, ts, cs, hsK, hsF, hsSrc, hsSt, hsCo, wk] = await Promise.all([
+        const [k, ts, cs, hsK, hsF, hsSrc, hsSt, hsCo, wk, gK, gCs] = await Promise.all([
             fetchKpis(), fetchTimeseries(), fetchCampaigns(),
             fetchHsKpis(), fetchHsFunnel(), fetchHsBySource(),
             fetchHsByStatus(), fetchHsByCountry(),
             fetchWeekly(),
+            fetchGoogleKpis(), fetchGoogleCampaigns(),
         ]);
         renderKpis(k);
         renderTimeseries(ts);
@@ -465,9 +470,85 @@ async function loadAll() {
         renderHsByStatus(hsSt);
         renderHsByCountry(hsCo);
         renderWeekly(wk);
+        renderGoogleKpis(gK);
+        renderGoogleCampaigns(gCs);
     } catch (e) {
         toast('Error cargando datos: ' + e.message, 'error');
     }
+}
+
+// === Google Ads render ===
+function renderGoogleKpis(k) {
+    $('#g-kpi-cost').textContent = fmtEur.format(k.cost);
+    $('#g-kpi-impressions').textContent = fmtInt.format(k.impressions);
+    $('#g-kpi-clicks').textContent = fmtInt.format(k.clicks);
+    $('#g-kpi-ctr').textContent = k.ctr.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    $('#g-kpi-cpc').textContent = fmtEur3.format(k.cpc);
+    $('#g-kpi-conv').textContent = fmtInt.format(Math.round(k.conversions));
+    $('#g-kpi-revenue').textContent = fmtEur.format(k.revenue);
+    $('#g-kpi-roas').textContent = k.roas > 0 ? `${k.roas.toLocaleString('es-ES', {minimumFractionDigits:2, maximumFractionDigits:2})}x` : '-';
+
+    $('#last-sync-google').textContent = k.last_sync
+        ? `Google: ${formatDateTimeES(k.last_sync)}`
+        : 'Google: nunca';
+
+    // Mensaje si no hay datos
+    const msg = $('#google-status-msg');
+    if (k.cost === 0 && k.impressions === 0) {
+        msg.textContent = '⏳ Sin datos. Pendiente de aprobación del Developer Token o de primera sincronización.';
+    } else {
+        msg.textContent = '';
+    }
+}
+
+function renderGoogleCampaigns(rows) {
+    const tbody = $('#table-google-campaigns tbody');
+    const tfoot = $('#table-google-campaigns tfoot');
+
+    if (!rows.length) {
+        tbody.innerHTML = '<tr><td colspan="11" style="text-align:center;color:#64748b;padding:24px;">No hay campañas Google. Pulsa "Sincronizar Google" o lanza desde terminal: <code>python google_sync.py</code></td></tr>';
+        tfoot.innerHTML = '';
+        return;
+    }
+
+    tbody.innerHTML = rows.map(c => `
+        <tr>
+            <td class="td-name" title="${escapeHtml(c.name || '')}">${escapeHtml(c.name || '(sin nombre)')}</td>
+            <td>${escapeHtml(c.channel_type || '-')}</td>
+            <td><span class="status-pill ${statusClass(c.status)}">${c.status || '-'}</span></td>
+            <td class="td-num">${fmtEur.format(c.cost)}</td>
+            <td class="td-num">${fmtInt.format(c.impressions)}</td>
+            <td class="td-num">${fmtInt.format(c.clicks)}</td>
+            <td class="td-num">${fmtPct(c.ctr)}</td>
+            <td class="td-num">${c.clicks > 0 ? fmtEur3.format(c.cpc) : '-'}</td>
+            <td class="td-num">${c.conversions > 0 ? fmtInt.format(Math.round(c.conversions)) : '-'}</td>
+            <td class="td-num">${c.revenue > 0 ? fmtEur.format(c.revenue) : '-'}</td>
+            <td class="td-num">${c.roas > 0 ? c.roas.toLocaleString('es-ES',{minimumFractionDigits:2,maximumFractionDigits:2})+'x' : '-'}</td>
+        </tr>
+    `).join('');
+
+    const tot = rows.reduce((acc, c) => {
+        acc.cost += c.cost; acc.impr += c.impressions; acc.clicks += c.clicks;
+        acc.conv += c.conversions; acc.rev += c.revenue;
+        return acc;
+    }, { cost: 0, impr: 0, clicks: 0, conv: 0, rev: 0 });
+    const totCtr = tot.impr > 0 ? (tot.clicks / tot.impr * 100) : 0;
+    const totCpc = tot.clicks > 0 ? (tot.cost / tot.clicks) : 0;
+    const totRoas = tot.cost > 0 ? (tot.rev / tot.cost) : 0;
+    tfoot.innerHTML = `
+        <tr>
+            <td>Total (${rows.length} campañas)</td>
+            <td></td><td></td>
+            <td class="td-num">${fmtEur.format(tot.cost)}</td>
+            <td class="td-num">${fmtInt.format(tot.impr)}</td>
+            <td class="td-num">${fmtInt.format(tot.clicks)}</td>
+            <td class="td-num">${fmtPct(totCtr)}</td>
+            <td class="td-num">${tot.clicks > 0 ? fmtEur3.format(totCpc) : '-'}</td>
+            <td class="td-num">${fmtInt.format(Math.round(tot.conv))}</td>
+            <td class="td-num">${fmtEur.format(tot.rev)}</td>
+            <td class="td-num">${totRoas > 0 ? totRoas.toLocaleString('es-ES',{minimumFractionDigits:2,maximumFractionDigits:2})+'x' : '-'}</td>
+        </tr>
+    `;
 }
 
 async function loadWeeklyOnly() {
@@ -618,6 +699,7 @@ async function doSyncSource(btnId, endpoint, labelOriginal, labelDuring) {
 }
 
 const doSync = () => doSyncSource('btn-sync', '/api/sync', 'Meta', 'Meta...');
+const doSyncGoogle = () => doSyncSource('btn-sync-google', '/api/google/sync', 'Google', 'Google...');
 const doSyncHs = () => doSyncSource('btn-sync-hs', '/api/hubspot/sync', 'HubSpot', 'HubSpot...');
 
 // === Init ===
@@ -649,6 +731,7 @@ function init() {
     });
 
     $('#btn-sync').addEventListener('click', doSync);
+    $('#btn-sync-google').addEventListener('click', doSyncGoogle);
     $('#btn-sync-hs').addEventListener('click', doSyncHs);
     $('#btn-export').addEventListener('click', exportCsv);
 

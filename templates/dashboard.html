@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Dashboard 360 Heroturfs - Meta Ads + HubSpot</title>
+    <title>Dashboard 360 Heroturfs - Meta + Google + HubSpot</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 </head>
@@ -11,7 +11,7 @@
     <header class="topbar">
         <div class="topbar-left">
             <h1>Dashboard 360 <span class="brand">Heroturfs</span></h1>
-            <span class="subtitle">Meta Ads + HubSpot CRM</span>
+            <span class="subtitle">Meta Ads + Google Ads + HubSpot CRM</span>
         </div>
         <div class="topbar-right">
             <div class="country-dropdown" id="country-dropdown">
@@ -35,6 +35,10 @@
                 <span class="sync-icon">&#x21bb;</span>
                 <span class="sync-label">Meta</span>
             </button>
+            <button id="btn-sync-google" class="btn btn-primary" title="Sincronizar Google Ads">
+                <span class="sync-icon">&#x21bb;</span>
+                <span class="sync-label">Google</span>
+            </button>
             <button id="btn-sync-hs" class="btn btn-primary" title="Sincronizar HubSpot (ultimos 30 dias)">
                 <span class="sync-icon">&#x21bb;</span>
                 <span class="sync-label">HubSpot</span>
@@ -46,6 +50,8 @@
         <span id="date-range" class="date-range">-</span>
         <span class="separator">&middot;</span>
         <span id="last-sync" class="last-sync">Meta: -</span>
+        <span class="separator">&middot;</span>
+        <span id="last-sync-google" class="last-sync">Google: -</span>
         <span class="separator">&middot;</span>
         <span id="last-sync-hs" class="last-sync">HubSpot: -</span>
     </div>
@@ -138,6 +144,79 @@
                             <th class="th-num">CPC</th>
                             <th class="th-num">Leads</th>
                             <th class="th-num">CPL</th>
+                        </tr>
+                    </thead>
+                    <tbody></tbody>
+                    <tfoot></tfoot>
+                </table>
+            </div>
+        </section>
+
+        <!-- ================ Google Ads ================ -->
+        <section class="section-divider">
+            <h2 class="section-title">Google Ads <span class="section-badge section-badge-google">B&uacute;squeda + Display</span></h2>
+            <p class="section-desc">M&eacute;tricas de campa&ntilde;as Google Ads. <span id="google-status-msg" class="google-status-msg"></span></p>
+        </section>
+
+        <section class="kpi-grid">
+            <div class="kpi-card kpi-google-cost">
+                <div class="kpi-label">Coste total</div>
+                <div class="kpi-value" id="g-kpi-cost">-</div>
+                <div class="kpi-unit">EUR</div>
+            </div>
+            <div class="kpi-card">
+                <div class="kpi-label">Impresiones</div>
+                <div class="kpi-value" id="g-kpi-impressions">-</div>
+            </div>
+            <div class="kpi-card">
+                <div class="kpi-label">Clicks</div>
+                <div class="kpi-value" id="g-kpi-clicks">-</div>
+            </div>
+            <div class="kpi-card">
+                <div class="kpi-label">CTR</div>
+                <div class="kpi-value" id="g-kpi-ctr">-</div>
+                <div class="kpi-unit">%</div>
+            </div>
+            <div class="kpi-card">
+                <div class="kpi-label">CPC</div>
+                <div class="kpi-value" id="g-kpi-cpc">-</div>
+                <div class="kpi-unit">EUR</div>
+            </div>
+            <div class="kpi-card kpi-google-conv">
+                <div class="kpi-label">Conversiones</div>
+                <div class="kpi-value" id="g-kpi-conv">-</div>
+            </div>
+            <div class="kpi-card kpi-google-revenue">
+                <div class="kpi-label">Revenue (Google)</div>
+                <div class="kpi-value" id="g-kpi-revenue">-</div>
+                <div class="kpi-unit">EUR</div>
+            </div>
+            <div class="kpi-card kpi-google-roas">
+                <div class="kpi-label">ROAS Google</div>
+                <div class="kpi-value" id="g-kpi-roas">-</div>
+                <div class="kpi-unit">EUR x EUR</div>
+            </div>
+        </section>
+
+        <section class="table-card">
+            <div class="table-header">
+                <h2>Campa&ntilde;as Google Ads</h2>
+            </div>
+            <div class="table-wrapper">
+                <table id="table-google-campaigns">
+                    <thead>
+                        <tr>
+                            <th class="th-name">Campa&ntilde;a</th>
+                            <th>Tipo</th>
+                            <th>Estado</th>
+                            <th class="th-num">Coste</th>
+                            <th class="th-num">Impres.</th>
+                            <th class="th-num">Clicks</th>
+                            <th class="th-num">CTR</th>
+                            <th class="th-num">CPC</th>
+                            <th class="th-num">Conv.</th>
+                            <th class="th-num">Revenue</th>
+                            <th class="th-num">ROAS</th>
                         </tr>
                     </thead>
                     <tbody></tbody>

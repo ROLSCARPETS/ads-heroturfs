@@ -1,5 +1,7 @@
 # Secretos
 .env
+google_oauth_client.json
+*.token.json
 
 # Base de datos local
 *.db
