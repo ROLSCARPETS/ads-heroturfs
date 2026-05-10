@@ -14,9 +14,16 @@
             <span class="subtitle">Meta Ads + HubSpot CRM</span>
         </div>
         <div class="topbar-right">
-            <select id="country-selector" class="country-selector" title="Filtrar por pais">
-                <option value="">Todos los pa&iacute;ses</option>
-            </select>
+            <div class="country-dropdown" id="country-dropdown">
+                <button type="button" class="country-trigger" id="country-trigger">
+                    <span class="country-trigger-flag" id="country-trigger-flag">
+                        <span class="flag-fallback">🌐</span>
+                    </span>
+                    <span class="country-trigger-label" id="country-trigger-label">Todos los pa&iacute;ses</span>
+                    <span class="country-trigger-arrow">&#x25BE;</span>
+                </button>
+                <ul class="country-options" id="country-options"></ul>
+            </div>
             <div class="range-selector" role="tablist">
                 <button class="range-btn" data-days="7">7 d&iacute;as</button>
                 <button class="range-btn active" data-days="30">30 d&iacute;as</button>

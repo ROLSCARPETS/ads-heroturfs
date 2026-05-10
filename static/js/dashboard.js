@@ -20,26 +20,33 @@ function buildQuery(extra = {}) {
 
 const MONTH_NAMES_ES = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
 
-// Banderas (emoji Unicode) por pais. Usadas en el selector y en la tabla de paises.
-const COUNTRY_FLAGS = {
-    "España": "🇪🇸", "Francia": "🇫🇷", "Italia": "🇮🇹", "Reino Unido": "🇬🇧",
-    "Alemania": "🇩🇪", "Bélgica": "🇧🇪", "Luxemburgo": "🇱🇺", "Portugal": "🇵🇹",
-    "Estados Unidos": "🇺🇸", "Afganistán": "🇦🇫", "Albania": "🇦🇱", "Andorra": "🇦🇩",
-    "Argentina": "🇦🇷", "Austria": "🇦🇹", "Brasil": "🇧🇷", "Bulgaria": "🇧🇬",
-    "Canadá": "🇨🇦", "Catar": "🇶🇦", "Chequia": "🇨🇿", "Chile": "🇨🇱",
-    "Chipre": "🇨🇾", "Costa Rica": "🇨🇷", "Croacia": "🇭🇷", "Dinamarca": "🇩🇰",
-    "Emiratos Árabes Unidos": "🇦🇪", "Eslovaquia": "🇸🇰", "Eslovenia": "🇸🇮",
-    "Estonia": "🇪🇪", "Finlandia": "🇫🇮", "Grecia": "🇬🇷", "Hungría": "🇭🇺",
-    "India": "🇮🇳", "Irlanda": "🇮🇪", "Israel": "🇮🇱", "Kuwait": "🇰🇼",
-    "Lituania": "🇱🇹", "Malasia": "🇲🇾", "Marruecos": "🇲🇦", "México": "🇲🇽",
-    "Noruega": "🇳🇴", "Nueva Caledonia": "🇳🇨", "Nueva Zelanda": "🇳🇿",
-    "Países Bajos": "🇳🇱", "Perú": "🇵🇪", "Polonia": "🇵🇱", "Rumanía": "🇷🇴",
-    "San Marino": "🇸🇲", "Suecia": "🇸🇪", "Suiza": "🇨🇭", "Turquía": "🇹🇷",
-    "Ucrania": "🇺🇦", "Venezuela": "🇻🇪",
-    "Islas Ultramarinas Menores de Estados Unidos": "🇺🇸",
+// Mapeo pais -> codigo ISO2 (alpha-2). Usado para servir SVG desde flagcdn.com.
+// Windows no renderiza emojis de banderas, asi que usamos imagenes reales.
+const COUNTRY_ISO = {
+    "España": "es", "Francia": "fr", "Italia": "it", "Reino Unido": "gb",
+    "Alemania": "de", "Bélgica": "be", "Luxemburgo": "lu", "Portugal": "pt",
+    "Estados Unidos": "us", "Afganistán": "af", "Albania": "al", "Andorra": "ad",
+    "Argentina": "ar", "Austria": "at", "Brasil": "br", "Bulgaria": "bg",
+    "Canadá": "ca", "Catar": "qa", "Chequia": "cz", "Chile": "cl",
+    "Chipre": "cy", "Costa Rica": "cr", "Croacia": "hr", "Dinamarca": "dk",
+    "Emiratos Árabes Unidos": "ae", "Eslovaquia": "sk", "Eslovenia": "si",
+    "Estonia": "ee", "Finlandia": "fi", "Grecia": "gr", "Hungría": "hu",
+    "India": "in", "Irlanda": "ie", "Israel": "il", "Kuwait": "kw",
+    "Lituania": "lt", "Malasia": "my", "Marruecos": "ma", "México": "mx",
+    "Noruega": "no", "Nueva Caledonia": "nc", "Nueva Zelanda": "nz",
+    "Países Bajos": "nl", "Perú": "pe", "Polonia": "pl", "Rumanía": "ro",
+    "San Marino": "sm", "Suecia": "se", "Suiza": "ch", "Turquía": "tr",
+    "Ucrania": "ua", "Venezuela": "ve",
+    "Islas Ultramarinas Menores de Estados Unidos": "us",
 };
 
-const flag = (country) => COUNTRY_FLAGS[country] || "🌍";
+function flagImg(country, size = 'small') {
+    const iso = COUNTRY_ISO[country];
+    if (!iso) return '<span class="flag-fallback">🌐</span>';
+    // Usamos SVG de flagcdn.com (CDN publico). w40 = 40px width PNG, .svg = vectorial
+    const cls = size === 'big' ? 'flag-img flag-big' : 'flag-img';
+    return `<img src="https://flagcdn.com/${iso}.svg" class="${cls}" alt="${escapeHtml(country)}" loading="lazy">`;
+}
 
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => document.querySelectorAll(sel);
@@ -181,7 +188,7 @@ function renderHsByCountry(rows) {
     const tbody = $('#table-hs-country tbody');
     tbody.innerHTML = rows.map(r => `
         <tr>
-            <td><span class="flag">${flag(r.pais)}</span> ${escapeHtml(r.pais)}</td>
+            <td>${flagImg(r.pais)}${escapeHtml(r.pais)}</td>
             <td class="td-num">${fmtInt.format(r.contactos)}</td>
         </tr>
     `).join('');
@@ -535,16 +542,54 @@ async function loadTimeseriesOnly() {
 async function loadCountrySelector() {
     try {
         const countries = await fetchCountries();
-        const sel = $('#country-selector');
-        // Mantener la opcion "Todos" y anadir el resto con bandera
-        const opts = ['<option value="">🌍 Todos los países</option>'];
+        const ul = $('#country-options');
+        // Opcion "todos" + resto con bandera SVG
+        const items = [
+            `<li data-value="" class="selected"><span class="flag-fallback">🌐</span> Todos los países</li>`
+        ];
         countries.forEach(c => {
-            opts.push(`<option value="${escapeHtml(c)}">${flag(c)} ${escapeHtml(c)}</option>`);
+            items.push(`<li data-value="${escapeHtml(c)}">${flagImg(c)} ${escapeHtml(c)}</li>`);
         });
-        sel.innerHTML = opts.join('');
+        ul.innerHTML = items.join('');
     } catch (e) {
         console.error('No se pudo cargar lista de paises:', e);
     }
+}
+
+function setupCountryDropdown() {
+    const dropdown = $('#country-dropdown');
+    const trigger = $('#country-trigger');
+    const ul = $('#country-options');
+    const triggerFlag = $('#country-trigger-flag');
+    const triggerLabel = $('#country-trigger-label');
+
+    trigger.addEventListener('click', (e) => {
+        e.stopPropagation();
+        dropdown.classList.toggle('open');
+    });
+
+    document.addEventListener('click', (e) => {
+        if (!dropdown.contains(e.target)) dropdown.classList.remove('open');
+    });
+
+    ul.addEventListener('click', (e) => {
+        const li = e.target.closest('li');
+        if (!li) return;
+        const value = li.dataset.value;
+        // Marcar seleccionada
+        ul.querySelectorAll('li').forEach(x => x.classList.remove('selected'));
+        li.classList.add('selected');
+        // Actualizar trigger
+        triggerLabel.textContent = value || 'Todos los países';
+        triggerFlag.innerHTML = value ? flagImg(value) : '<span class="flag-fallback">🌐</span>';
+        dropdown.classList.toggle('has-value', !!value);
+        dropdown.classList.remove('open');
+        // Aplicar filtro
+        if (value !== state.country) {
+            state.country = value;
+            loadAll();
+        }
+    });
 }
 
 // === Sync ===
@@ -607,11 +652,8 @@ function init() {
     $('#btn-sync-hs').addEventListener('click', doSyncHs);
     $('#btn-export').addEventListener('click', exportCsv);
 
-    // Selector de pais
-    $('#country-selector').addEventListener('change', (e) => {
-        state.country = e.target.value;
-        loadAll();
-    });
+    // Selector de pais (dropdown custom para soportar imagenes de banderas)
+    setupCountryDropdown();
 
     // Selector de granularidad de la tabla semanal (independiente del grafico)
     $$('.wgran-btn').forEach(btn => {

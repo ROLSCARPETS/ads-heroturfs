@@ -66,21 +66,119 @@ h1, h2, h3 { font-weight: 600; letter-spacing: -0.01em; }
 }
 
 /* === Country selector === */
-.country-selector {
+/* === Country dropdown custom (con banderas SVG reales) === */
+.country-dropdown {
+    position: relative;
+    display: inline-block;
+}
+.country-trigger {
     background: var(--surface);
     border: 1px solid var(--border);
     border-radius: var(--radius-sm);
-    padding: 7px 14px;
+    padding: 6px 12px;
     font-size: 13px;
     font-weight: 500;
     color: var(--text);
     cursor: pointer;
-    font-family: -apple-system, "Segoe UI", "Apple Color Emoji", "Segoe UI Emoji", sans-serif;
+    font-family: inherit;
     min-width: 200px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
     transition: border-color 0.15s, box-shadow 0.15s;
 }
-.country-selector option { font-family: -apple-system, "Segoe UI", "Apple Color Emoji", "Segoe UI Emoji", sans-serif; }
-.flag { display: inline-block; margin-right: 4px; }
+.country-trigger:hover { border-color: var(--accent); }
+.country-trigger:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(37,99,235,0.1); }
+.country-dropdown.open .country-trigger {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(37,99,235,0.1);
+}
+.country-dropdown.has-value .country-trigger {
+    background: linear-gradient(135deg, #fff, #eff6ff);
+    border-color: var(--accent);
+}
+.country-trigger-flag {
+    display: inline-flex;
+    align-items: center;
+    width: 22px;
+    height: 16px;
+    flex-shrink: 0;
+}
+.country-trigger-label {
+    flex: 1;
+    text-align: left;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.country-trigger-arrow {
+    color: var(--text-muted);
+    font-size: 10px;
+    transition: transform 0.2s;
+}
+.country-dropdown.open .country-trigger-arrow { transform: rotate(180deg); }
+
+.country-options {
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0;
+    right: 0;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    box-shadow: var(--shadow-lg);
+    list-style: none;
+    margin: 0;
+    padding: 4px 0;
+    max-height: 360px;
+    overflow-y: auto;
+    z-index: 50;
+    display: none;
+}
+.country-dropdown.open .country-options { display: block; }
+.country-options li {
+    padding: 8px 12px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    cursor: pointer;
+    font-size: 13px;
+    color: var(--text);
+    transition: background 0.1s;
+    white-space: nowrap;
+}
+.country-options li:hover { background: var(--bg); }
+.country-options li.selected {
+    background: #eff6ff;
+    color: var(--accent);
+    font-weight: 600;
+}
+.country-options li .flag-img {
+    width: 22px;
+    height: 16px;
+    flex-shrink: 0;
+}
+
+/* Imagen de bandera generica */
+.flag-img {
+    display: inline-block;
+    width: 18px;
+    height: 13px;
+    object-fit: cover;
+    border-radius: 2px;
+    box-shadow: 0 0 0 1px rgba(0,0,0,0.1);
+    vertical-align: middle;
+    margin-right: 6px;
+}
+.flag-img.flag-big { width: 26px; height: 19px; }
+.flag-fallback {
+    display: inline-block;
+    width: 18px;
+    height: 13px;
+    text-align: center;
+    line-height: 13px;
+    font-size: 12px;
+}
 .country-selector:hover { border-color: var(--accent); }
 .country-selector:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(37,99,235,0.1); }
 .country-selector:not([value=""]):not(:has(option[value=""]:checked)) {
