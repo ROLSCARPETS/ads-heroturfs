@@ -2,7 +2,8 @@
 
 const state = {
     days: 30,
-    granularity: 'daily',
+    granularity: 'daily',     // del grafico de evolucion
+    weeklyGranularity: 'weekly', // de la tabla semanal/mensual
     country: '',  // vacio = todos los paises
     campaigns: [],
     sortBy: 'spend',
@@ -52,6 +53,7 @@ const fetchHsBySource = () => fetchJson(`/api/hubspot/by-source?${buildQuery()}`
 const fetchHsByStatus = () => fetchJson(`/api/hubspot/by-status?${buildQuery()}`);
 const fetchHsByCountry = ()=> fetchJson(`/api/hubspot/by-country?${buildQuery()}`);
 const fetchCountries = ()  => fetchJson('/api/countries');
+const fetchWeekly = ()     => fetchJson(`/api/weekly?${buildQuery({granularity: state.weeklyGranularity})}`);
 
 // === Render KPIs ===
 function renderKpis(k) {
@@ -418,10 +420,11 @@ function csvCell(v) {
 // === Carga principal ===
 async function loadAll() {
     try {
-        const [k, ts, cs, hsK, hsF, hsSrc, hsSt, hsCo] = await Promise.all([
+        const [k, ts, cs, hsK, hsF, hsSrc, hsSt, hsCo, wk] = await Promise.all([
             fetchKpis(), fetchTimeseries(), fetchCampaigns(),
             fetchHsKpis(), fetchHsFunnel(), fetchHsBySource(),
             fetchHsByStatus(), fetchHsByCountry(),
+            fetchWeekly(),
         ]);
         renderKpis(k);
         renderTimeseries(ts);
@@ -433,9 +436,70 @@ async function loadAll() {
         renderHsBySource(hsSrc);
         renderHsByStatus(hsSt);
         renderHsByCountry(hsCo);
+        renderWeekly(wk);
     } catch (e) {
         toast('Error cargando datos: ' + e.message, 'error');
     }
+}
+
+async function loadWeeklyOnly() {
+    try {
+        renderWeekly(await fetchWeekly());
+    } catch (e) {
+        toast('Error cargando tabla semanal: ' + e.message, 'error');
+    }
+}
+
+// === Weekly table render ===
+function fmtCell(value, format) {
+    if (value === 0 || value === null || value === undefined) return '<span class="empty">-</span>';
+    if (format === 'eur') return fmtEur.format(value) + ' €';
+    if (format === 'pct') return value.toLocaleString('es-ES', {minimumFractionDigits:1, maximumFractionDigits:1}) + '%';
+    if (format === 'x') return value.toLocaleString('es-ES', {minimumFractionDigits:2, maximumFractionDigits:2}) + 'x';
+    return fmtInt.format(value);
+}
+
+function renderWeekly(payload) {
+    const periods = payload.periods || [];
+    const sections = payload.sections || [];
+
+    // Cabecera
+    const thead = $('#weekly-table thead');
+    let html = '<tr>';
+    html += `<th class="col-label">Métrica</th>`;
+    html += `<th class="col-total">${escapeHtml(payload.totals_label || 'Acumulado')}</th>`;
+    periods.forEach(p => {
+        html += `<th class="col-period">${escapeHtml(p.label)}</th>`;
+    });
+    html += '</tr>';
+    thead.innerHTML = html;
+
+    // Cuerpo
+    const tbody = $('#weekly-table tbody');
+    const colspan = 2 + periods.length;
+    let bodyHtml = '';
+
+    sections.forEach(sec => {
+        bodyHtml += `<tr class="section-title"><td class="col-label" colspan="${colspan}">${escapeHtml(sec.title)}</td></tr>`;
+        sec.rows.forEach(row => {
+            const cls = [];
+            if (row.indent) cls.push('row-indent');
+            if (row.header) cls.push('row-header');
+            bodyHtml += `<tr class="${cls.join(' ')}">`;
+            const labelTooltip = row.note ? ` title="${escapeHtml(row.note)}"` : '';
+            const labelExtra = row.note ? ' <span class="note-disabled">(pendiente)</span>' : '';
+            bodyHtml += `<td class="col-label"${labelTooltip}>${escapeHtml(row.label)}${labelExtra}</td>`;
+            bodyHtml += `<td class="col-total">${fmtCell(row.total, row.format)}</td>`;
+            row.values.forEach(v => {
+                bodyHtml += `<td class="col-period">${fmtCell(v, row.format)}</td>`;
+            });
+            bodyHtml += '</tr>';
+        });
+    });
+    tbody.innerHTML = bodyHtml;
+
+    // Info
+    $('#weekly-info').textContent = `${periods.length} ${payload.granularity === 'monthly' ? 'meses' : payload.granularity === 'weekly' ? 'semanas' : 'días'} - ${payload.since} a ${payload.until}${payload.country ? ' - ' + payload.country : ''}`;
 }
 
 async function loadTimeseriesOnly() {
@@ -526,6 +590,16 @@ function init() {
     $('#country-selector').addEventListener('change', (e) => {
         state.country = e.target.value;
         loadAll();
+    });
+
+    // Selector de granularidad de la tabla semanal (independiente del grafico)
+    $$('.wgran-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            $$('.wgran-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            state.weeklyGranularity = btn.dataset.wgran;
+            loadWeeklyOnly();
+        });
     });
 
     setupTableSort();

@@ -684,6 +684,251 @@ def api_hubspot_by_country():
     return jsonify([{"pais": r["pais"], "contactos": r["c"]} for r in rows])
 
 
+# ====================================================================
+# Vista semanal/mensual estilo Excel - matriz completa
+# ====================================================================
+
+WON_LEAD_STATUSES = (
+    "Terminado | Compra Web",
+    "Terminado | Proyecto ganado",
+    "Terminado | Distribuidor convertido en cliente",
+)
+
+
+def _generate_periods(since_iso, until_iso, granularity):
+    """Genera lista [(key, label)] de periodos (lunes/primeros de mes/dias) en el rango."""
+    s = date.fromisoformat(since_iso)
+    u = date.fromisoformat(until_iso)
+    out = []
+
+    if granularity == "monthly":
+        cur = date(s.year, s.month, 1)
+        while cur <= u:
+            month_names = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"]
+            label = f"{month_names[cur.month - 1]} {cur.year}"
+            out.append((cur.isoformat(), label))
+            if cur.month == 12:
+                cur = date(cur.year + 1, 1, 1)
+            else:
+                cur = date(cur.year, cur.month + 1, 1)
+    elif granularity == "weekly":
+        # Lunes de la semana que contiene 'since'
+        cur = s - timedelta(days=s.weekday())
+        while cur <= u:
+            label = f"Sem {cur.strftime('%d/%m')}"
+            out.append((cur.isoformat(), label))
+            cur = cur + timedelta(days=7)
+    else:  # daily
+        cur = s
+        while cur <= u:
+            label = cur.strftime('%d/%m')
+            out.append((cur.isoformat(), label))
+            cur = cur + timedelta(days=1)
+
+    return out
+
+
+@app.route("/api/weekly")
+def api_weekly():
+    """Matriz semanal/mensual estilo Excel: una columna por periodo + acumulado.
+
+    Bloques: Inversion / Leads / CPL / Cerrados / Tasa exito / CAC / Ventas / ROAS.
+    Filtros: country (pais) y granularity (daily/weekly/monthly).
+    """
+    days_param = request.args.get("days", "30")
+    country = request.args.get("country") or None
+    granularity = request.args.get("granularity", "weekly")
+    if granularity not in ("daily", "weekly", "monthly"):
+        granularity = "weekly"
+
+    since, until, _days = _resolve_range(days_param)
+    since_hs = _date_to_hubspot_iso(since)
+    until_hs = _date_to_hubspot_iso(until, end=True)
+
+    periods = _generate_periods(since, until, granularity)
+    period_keys = [p[0] for p in periods]
+    period_labels = [p[1] for p in periods]
+    period_idx = {k: i for i, k in enumerate(period_keys)}
+    n = len(periods)
+
+    period_expr_meta = _period_expr(granularity)
+    period_expr_hs = _hubspot_period_expr(granularity)
+    period_expr_hs_deal = period_expr_hs.replace("createdate", "d.createdate")
+
+    # Inicializar buckets
+    spend_meta = [0.0] * n
+    leads_meta = [0] * n
+    leads_google = [0] * n
+    leads_other = [0] * n
+    cerrados = [0] * n
+    deals_won = [0] * n
+    revenue = [0.0] * n
+
+    pais_clause = " AND pais = ?" if country else ""
+    pais_clause_c = " AND c.pais = ?" if country else ""
+    pais_params = [country] if country else []
+
+    with _get_conn() as conn:
+        # 1. Spend Meta por periodo (filtrado por country)
+        sql = (
+            f"SELECT {period_expr_meta} p, SUM(i.spend) s "
+            "FROM insights_daily i JOIN campaigns c ON c.id = i.campaign_id "
+            "WHERE i.date BETWEEN ? AND ?"
+        )
+        params = [since, until]
+        if country:
+            sql += " AND c.country = ?"
+            params.append(country)
+        sql += " GROUP BY p"
+        for r in conn.execute(sql, params):
+            i = period_idx.get(r["p"])
+            if i is not None:
+                spend_meta[i] = r["s"] or 0
+
+        # 2. Leads HubSpot por periodo y fuente
+        sql = (
+            f"SELECT {period_expr_hs} p, fuentes_de_captacion_especificas f, COUNT(*) c "
+            f"FROM hubspot_contacts WHERE createdate BETWEEN ? AND ?{pais_clause} "
+            "GROUP BY p, f"
+        )
+        for r in conn.execute(sql, [since_hs, until_hs, *pais_params]):
+            i = period_idx.get(r["p"])
+            if i is None:
+                continue
+            f = r["f"]
+            c = r["c"]
+            if f == HUBSPOT_META_SOURCE:
+                leads_meta[i] += c
+            elif f == HUBSPOT_GOOGLE_SOURCE:
+                leads_google[i] += c
+            else:
+                leads_other[i] += c
+
+        # 3. Cerrados (clientes ganados) por periodo
+        won_placeholders = ",".join("?" for _ in WON_LEAD_STATUSES)
+        sql = (
+            f"SELECT {period_expr_hs} p, COUNT(*) c FROM hubspot_contacts "
+            f"WHERE createdate BETWEEN ? AND ? AND hs_lead_status IN ({won_placeholders}){pais_clause} "
+            "GROUP BY p"
+        )
+        for r in conn.execute(sql, [since_hs, until_hs, *WON_LEAD_STATUSES, *pais_params]):
+            i = period_idx.get(r["p"])
+            if i is not None:
+                cerrados[i] = r["c"]
+
+        # 4. Deals won + revenue por periodo
+        if country:
+            sql = (
+                f"SELECT {period_expr_hs_deal} p, COUNT(DISTINCT d.id) c, COALESCE(SUM(d.amount), 0) rev "
+                "FROM hubspot_deals d "
+                "JOIN hubspot_deal_contacts dc ON dc.deal_id = d.id "
+                "JOIN hubspot_contacts c ON c.id = dc.contact_id "
+                "WHERE d.is_won = 1 AND d.createdate BETWEEN ? AND ? AND c.pais = ? "
+                "GROUP BY p"
+            )
+            params = [since_hs, until_hs, country]
+        else:
+            sql = (
+                f"SELECT {period_expr_hs.replace('createdate', 'createdate')} p, "
+                "COUNT(*) c, COALESCE(SUM(amount), 0) rev "
+                "FROM hubspot_deals WHERE is_won = 1 AND createdate BETWEEN ? AND ? "
+                "GROUP BY p"
+            )
+            params = [since_hs, until_hs]
+        for r in conn.execute(sql, params):
+            i = period_idx.get(r["p"])
+            if i is not None:
+                deals_won[i] = r["c"]
+                revenue[i] = r["rev"] or 0
+
+    # Calcular metricas derivadas
+    leads_total = [leads_meta[i] + leads_google[i] + leads_other[i] for i in range(n)]
+    spend_google = [0.0] * n  # Pendiente integracion Google Ads API
+    spend_total = [spend_meta[i] + spend_google[i] for i in range(n)]
+    cpl_total = [(spend_total[i] / leads_total[i]) if leads_total[i] else 0 for i in range(n)]
+    cpl_meta = [(spend_meta[i] / leads_meta[i]) if leads_meta[i] else 0 for i in range(n)]
+    cpl_google = [(spend_google[i] / leads_google[i]) if leads_google[i] else 0 for i in range(n)]
+    tasa_exito = [(cerrados[i] / leads_total[i] * 100) if leads_total[i] else 0 for i in range(n)]
+    cac = [(spend_total[i] / cerrados[i]) if cerrados[i] else 0 for i in range(n)]
+    roas = [(revenue[i] / spend_total[i]) if spend_total[i] else 0 for i in range(n)]
+
+    # Acumulados (totales del rango)
+    sum_spend_meta = sum(spend_meta)
+    sum_spend_google = sum(spend_google)
+    sum_spend_total = sum_spend_meta + sum_spend_google
+    sum_leads_meta = sum(leads_meta)
+    sum_leads_google = sum(leads_google)
+    sum_leads_other = sum(leads_other)
+    sum_leads_total = sum(leads_total)
+    sum_cerrados = sum(cerrados)
+    sum_revenue = sum(revenue)
+    tot_cpl_total = (sum_spend_total / sum_leads_total) if sum_leads_total else 0
+    tot_cpl_meta = (sum_spend_meta / sum_leads_meta) if sum_leads_meta else 0
+    tot_cpl_google = (sum_spend_google / sum_leads_google) if sum_leads_google else 0
+    tot_tasa = (sum_cerrados / sum_leads_total * 100) if sum_leads_total else 0
+    tot_cac = (sum_spend_total / sum_cerrados) if sum_cerrados else 0
+    tot_roas = (sum_revenue / sum_spend_total) if sum_spend_total else 0
+
+    def row(label, vals, total, fmt, indent=False, header=False, note=None):
+        return {"label": label, "values": [round(v, 2) for v in vals], "total": round(total, 2),
+                "format": fmt, "indent": indent, "header": header, "note": note}
+
+    sections = [
+        {
+            "title": "Inversión por canales",
+            "rows": [
+                row("Inversión total", spend_total, sum_spend_total, "eur", header=True),
+                row("Meta Ads", spend_meta, sum_spend_meta, "eur", indent=True),
+                row("Google Ads", spend_google, sum_spend_google, "eur", indent=True,
+                    note="Pendiente de integrar Google Ads API"),
+            ],
+        },
+        {
+            "title": "Número de leads nuevos",
+            "rows": [
+                row("Leads totales", leads_total, sum_leads_total, "int", header=True),
+                row("Meta", leads_meta, sum_leads_meta, "int", indent=True),
+                row("Google", leads_google, sum_leads_google, "int", indent=True),
+                row("Desconocido / Otros", leads_other, sum_leads_other, "int", indent=True),
+            ],
+        },
+        {
+            "title": "CPL (Coste por Lead)",
+            "rows": [
+                row("CPL total", cpl_total, tot_cpl_total, "eur", header=True),
+                row("Meta", cpl_meta, tot_cpl_meta, "eur", indent=True),
+                row("Google", cpl_google, tot_cpl_google, "eur", indent=True),
+            ],
+        },
+        {
+            "title": "Conversion",
+            "rows": [
+                row("Cerrados (convertidos en cliente)", cerrados, sum_cerrados, "int"),
+                row("Tasa de éxito (Lead -> Cliente)", tasa_exito, tot_tasa, "pct"),
+                row("CAC (Coste de adquisición)", cac, tot_cac, "eur"),
+            ],
+        },
+        {
+            "title": "Revenue (Ventas netas HubSpot)",
+            "rows": [
+                row("Ventas netas", revenue, sum_revenue, "eur", header=True),
+                row("Deals ganados", deals_won, sum(deals_won), "int", indent=True),
+                row("ROAS (Revenue / Inversión)", roas, tot_roas, "x"),
+            ],
+        },
+    ]
+
+    return jsonify({
+        "since": since,
+        "until": until,
+        "country": country,
+        "granularity": granularity,
+        "periods": [{"key": k, "label": l} for k, l in periods],
+        "totals_label": "Acumulado",
+        "sections": sections,
+    })
+
+
 @app.route("/api/hubspot/sync", methods=["POST"])
 def api_hubspot_sync():
     """Lanza un sync incremental de los ultimos 30 dias para no tardar mucho desde el dashboard."""
