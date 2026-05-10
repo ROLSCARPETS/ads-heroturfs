@@ -44,6 +44,33 @@ async function fetchCampaigns(days) {
     return r.json();
 }
 
+// HubSpot APIs
+async function fetchHsKpis(days) {
+    const r = await fetch(`/api/hubspot/kpis?days=${days}`);
+    if (!r.ok) throw new Error('HS KPIs API error');
+    return r.json();
+}
+async function fetchHsFunnel(days) {
+    const r = await fetch(`/api/hubspot/funnel?days=${days}`);
+    if (!r.ok) throw new Error('HS Funnel API error');
+    return r.json();
+}
+async function fetchHsBySource(days) {
+    const r = await fetch(`/api/hubspot/by-source?days=${days}`);
+    if (!r.ok) throw new Error('HS BySource API error');
+    return r.json();
+}
+async function fetchHsByStatus(days) {
+    const r = await fetch(`/api/hubspot/by-status?days=${days}`);
+    if (!r.ok) throw new Error('HS ByStatus API error');
+    return r.json();
+}
+async function fetchHsByCountry(days) {
+    const r = await fetch(`/api/hubspot/by-country?days=${days}`);
+    if (!r.ok) throw new Error('HS ByCountry API error');
+    return r.json();
+}
+
 // === Render KPIs ===
 function renderKpis(k) {
     $('#kpi-spend').textContent = fmtEur.format(k.spend);
@@ -57,8 +84,102 @@ function renderKpis(k) {
 
     $('#date-range').textContent = `${formatDateES(k.since)} - ${formatDateES(k.until)} (${k.days} dias)`;
     $('#last-sync').textContent = k.last_sync
-        ? `Ultima sincronizacion: ${formatDateTimeES(k.last_sync)}`
-        : 'Nunca sincronizado';
+        ? `Meta: ${formatDateTimeES(k.last_sync)}`
+        : 'Meta: nunca';
+}
+
+// === HubSpot rendering ===
+function renderHsKpis(k) {
+    $('#hs-kpi-contacts').textContent = fmtInt.format(k.contacts_total);
+    $('#hs-kpi-deals-won').textContent = fmtInt.format(k.deals_won);
+    $('#hs-kpi-revenue').textContent = fmtEur.format(k.revenue_won);
+    $('#hs-kpi-revenue-meta').textContent = fmtEur.format(k.revenue_meta);
+    $('#hs-kpi-revenue-google').textContent = fmtEur.format(k.revenue_google);
+
+    $('#last-sync-hs').textContent = k.last_sync
+        ? `HubSpot: ${formatDateTimeES(k.last_sync)}`
+        : 'HubSpot: nunca';
+}
+
+function renderHsFunnel(f) {
+    // Asignar metricas calculadas a sus KPI cards
+    $('#hs-kpi-roas').textContent = f.roas > 0 ? `${f.roas.toLocaleString('es-ES', {minimumFractionDigits:2, maximumFractionDigits:2})}x` : '-';
+    $('#hs-kpi-cpl').textContent = f.cpl_real > 0 ? fmtEur.format(f.cpl_real) : '-';
+    $('#hs-kpi-cac').textContent = f.cac > 0 ? fmtEur.format(f.cac) : '-';
+
+    // Renderizar stages del funnel
+    const container = $('#funnel-stages');
+    const stages = f.stages || [];
+    const baseLeads = stages.find(s => s.label.includes('Leads Meta'))?.value || 0;
+    container.innerHTML = stages.map((s, i) => {
+        let pct = '';
+        // Mostrar % de conversion respecto al stage de referencia (Leads Meta API)
+        if (i >= 2 && baseLeads > 0 && !s.label.includes('Revenue')) {
+            const p = (s.value / baseLeads * 100);
+            pct = `<span class="funnel-stage-pct">${p.toFixed(1)}% de leads</span>`;
+        }
+        const valueFormatted = s.unit === 'EUR'
+            ? fmtEur.format(s.value)
+            : fmtInt.format(s.value);
+        return `
+            <div class="funnel-stage">
+                ${pct}
+                <div class="funnel-stage-label">${escapeHtml(s.label)}</div>
+                <div class="funnel-stage-value">${valueFormatted}<span class="funnel-stage-unit">${s.unit || ''}</span></div>
+            </div>
+        `;
+    }).join('');
+}
+
+function renderHsBySource(rows) {
+    const tbody = $('#table-hs-source tbody');
+    const tfoot = $('#table-hs-source tfoot');
+    tbody.innerHTML = rows.map(r => `
+        <tr>
+            <td>${escapeHtml(r.fuente || '-')}</td>
+            <td class="td-num">${fmtInt.format(r.contactos)}</td>
+            <td class="td-num">${fmtInt.format(r.ganados)}</td>
+            <td class="td-num">${r.contactos > 0 ? fmtPct(r.conv_rate) : '-'}</td>
+            <td class="td-num">${fmtInt.format(r.deals_won)}</td>
+            <td class="td-num">${r.revenue > 0 ? fmtEur.format(r.revenue) : '-'}</td>
+        </tr>
+    `).join('');
+
+    const tot = rows.reduce((acc, r) => {
+        acc.c += r.contactos; acc.g += r.ganados; acc.d += r.deals_won; acc.rev += r.revenue;
+        return acc;
+    }, { c: 0, g: 0, d: 0, rev: 0 });
+    const totConv = tot.c > 0 ? (tot.g / tot.c * 100) : 0;
+    tfoot.innerHTML = `
+        <tr>
+            <td>Total</td>
+            <td class="td-num">${fmtInt.format(tot.c)}</td>
+            <td class="td-num">${fmtInt.format(tot.g)}</td>
+            <td class="td-num">${fmtPct(totConv)}</td>
+            <td class="td-num">${fmtInt.format(tot.d)}</td>
+            <td class="td-num">${fmtEur.format(tot.rev)}</td>
+        </tr>
+    `;
+}
+
+function renderHsByStatus(rows) {
+    const tbody = $('#table-hs-status tbody');
+    tbody.innerHTML = rows.map(r => `
+        <tr>
+            <td>${escapeHtml(r.estado)}</td>
+            <td class="td-num">${fmtInt.format(r.contactos)}</td>
+        </tr>
+    `).join('');
+}
+
+function renderHsByCountry(rows) {
+    const tbody = $('#table-hs-country tbody');
+    tbody.innerHTML = rows.map(r => `
+        <tr>
+            <td>${escapeHtml(r.pais)}</td>
+            <td class="td-num">${fmtInt.format(r.contactos)}</td>
+        </tr>
+    `).join('');
 }
 
 function formatDateES(iso) {
@@ -315,16 +436,26 @@ function csvCell(v) {
 // === Carga principal ===
 async function loadAll() {
     try {
-        const [k, ts, cs] = await Promise.all([
+        const [k, ts, cs, hsK, hsF, hsSrc, hsSt, hsCo] = await Promise.all([
             fetchKpis(state.days),
             fetchTimeseries(state.days, state.granularity),
             fetchCampaigns(state.days),
+            fetchHsKpis(state.days),
+            fetchHsFunnel(state.days),
+            fetchHsBySource(state.days),
+            fetchHsByStatus(state.days),
+            fetchHsByCountry(state.days),
         ]);
         renderKpis(k);
         renderTimeseries(ts);
         state.campaigns = cs;
         renderTopCampaigns(cs);
         renderTable();
+        renderHsKpis(hsK);
+        renderHsFunnel(hsF);
+        renderHsBySource(hsSrc);
+        renderHsByStatus(hsSt);
+        renderHsByCountry(hsCo);
     } catch (e) {
         toast('Error cargando datos: ' + e.message, 'error');
     }
@@ -340,16 +471,17 @@ async function loadTimeseriesOnly() {
 }
 
 // === Sync ===
-async function doSync() {
-    const btn = $('#btn-sync');
+async function doSyncSource(btnId, endpoint, labelOriginal, labelDuring) {
+    const btn = document.getElementById(btnId);
     btn.classList.add('syncing');
     btn.disabled = true;
-    $('.sync-label', btn).textContent = 'Sincronizando...';
+    const labelEl = $('.sync-label', btn);
+    labelEl.textContent = labelDuring;
     try {
-        const r = await fetch('/api/sync', { method: 'POST' });
+        const r = await fetch(endpoint, { method: 'POST' });
         const data = await r.json();
         if (data.status === 'ok') {
-            toast('Sincronizacion completada', 'success');
+            toast(`Sincronizacion ${labelOriginal} completada`, 'success');
             await loadAll();
         } else {
             toast('Error: ' + (data.error || 'desconocido'), 'error');
@@ -359,9 +491,12 @@ async function doSync() {
     } finally {
         btn.classList.remove('syncing');
         btn.disabled = false;
-        $('.sync-label', btn).textContent = 'Sincronizar';
+        labelEl.textContent = labelOriginal;
     }
 }
+
+const doSync = () => doSyncSource('btn-sync', '/api/sync', 'Meta', 'Meta...');
+const doSyncHs = () => doSyncSource('btn-sync-hs', '/api/hubspot/sync', 'HubSpot', 'HubSpot...');
 
 // === Init ===
 function init() {
@@ -392,6 +527,7 @@ function init() {
     });
 
     $('#btn-sync').addEventListener('click', doSync);
+    $('#btn-sync-hs').addEventListener('click', doSyncHs);
     $('#btn-export').addEventListener('click', exportCsv);
 
     setupTableSort();

@@ -3,15 +3,15 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Analisis Meta Ads - Heroturfs</title>
+    <title>Dashboard 360 Heroturfs - Meta Ads + HubSpot</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 </head>
 <body>
     <header class="topbar">
         <div class="topbar-left">
-            <h1>Analisis Meta Ads <span class="brand">Heroturfs</span></h1>
-            <span class="subtitle">act_2287331294937474 - EUR</span>
+            <h1>Dashboard 360 <span class="brand">Heroturfs</span></h1>
+            <span class="subtitle">Meta Ads + HubSpot CRM</span>
         </div>
         <div class="topbar-right">
             <div class="range-selector" role="tablist">
@@ -21,9 +21,13 @@
                 <button class="range-btn" data-days="365">12 meses</button>
                 <button class="range-btn" data-days="all">Todo</button>
             </div>
-            <button id="btn-sync" class="btn btn-primary">
+            <button id="btn-sync" class="btn btn-primary" title="Sincronizar Meta Ads">
                 <span class="sync-icon">&#x21bb;</span>
-                <span class="sync-label">Sincronizar</span>
+                <span class="sync-label">Meta</span>
+            </button>
+            <button id="btn-sync-hs" class="btn btn-primary" title="Sincronizar HubSpot (ultimos 30 dias)">
+                <span class="sync-icon">&#x21bb;</span>
+                <span class="sync-label">HubSpot</span>
             </button>
         </div>
     </header>
@@ -31,7 +35,9 @@
     <div class="meta-bar">
         <span id="date-range" class="date-range">-</span>
         <span class="separator">&middot;</span>
-        <span id="last-sync" class="last-sync">Ultima sincronizacion: -</span>
+        <span id="last-sync" class="last-sync">Meta: -</span>
+        <span class="separator">&middot;</span>
+        <span id="last-sync-hs" class="last-sync">HubSpot: -</span>
     </div>
 
     <main class="content">
@@ -127,6 +133,122 @@
                     <tbody></tbody>
                     <tfoot></tfoot>
                 </table>
+            </div>
+        </section>
+
+        <!-- ================ HubSpot CRM ================ -->
+        <section class="section-divider">
+            <h2 class="section-title">HubSpot CRM <span class="section-badge">Visi&oacute;n 360</span></h2>
+            <p class="section-desc">Cruce de campa&ntilde;as Meta con CRM real para medir ROAS, CPL real y CAC.</p>
+        </section>
+
+        <!-- KPIs HubSpot -->
+        <section class="kpi-grid">
+            <div class="kpi-card kpi-hs-contacts">
+                <div class="kpi-label">Contactos creados</div>
+                <div class="kpi-value" id="hs-kpi-contacts">-</div>
+            </div>
+            <div class="kpi-card kpi-hs-won">
+                <div class="kpi-label">Deals ganados</div>
+                <div class="kpi-value" id="hs-kpi-deals-won">-</div>
+            </div>
+            <div class="kpi-card kpi-hs-revenue">
+                <div class="kpi-label">Revenue total</div>
+                <div class="kpi-value" id="hs-kpi-revenue">-</div>
+                <div class="kpi-unit">EUR</div>
+            </div>
+            <div class="kpi-card kpi-hs-revenue-meta">
+                <div class="kpi-label">Revenue de Meta</div>
+                <div class="kpi-value" id="hs-kpi-revenue-meta">-</div>
+                <div class="kpi-unit">EUR</div>
+            </div>
+            <div class="kpi-card kpi-hs-revenue-google">
+                <div class="kpi-label">Revenue de Google</div>
+                <div class="kpi-value" id="hs-kpi-revenue-google">-</div>
+                <div class="kpi-unit">EUR</div>
+            </div>
+            <div class="kpi-card kpi-roas">
+                <div class="kpi-label">ROAS Meta</div>
+                <div class="kpi-value" id="hs-kpi-roas">-</div>
+                <div class="kpi-unit">EUR x EUR</div>
+            </div>
+            <div class="kpi-card kpi-cpl-real">
+                <div class="kpi-label">CPL real Meta</div>
+                <div class="kpi-value" id="hs-kpi-cpl">-</div>
+                <div class="kpi-unit">EUR / contacto</div>
+            </div>
+            <div class="kpi-card kpi-cac">
+                <div class="kpi-label">CAC Meta</div>
+                <div class="kpi-value" id="hs-kpi-cac">-</div>
+                <div class="kpi-unit">EUR / cliente</div>
+            </div>
+        </section>
+
+        <!-- Funnel Meta -->
+        <section class="funnel-card">
+            <div class="chart-header">
+                <h2>Funnel Meta: del gasto al revenue</h2>
+                <span class="chart-subtitle">Gasto en Meta -&gt; Leads API -&gt; Contactos HubSpot atribuidos -&gt; Ganados -&gt; Revenue</span>
+            </div>
+            <div id="funnel-stages" class="funnel-stages"></div>
+        </section>
+
+        <!-- Tabla por fuente -->
+        <section class="table-card">
+            <div class="table-header">
+                <h2>Contactos y revenue por fuente de captaci&oacute;n</h2>
+            </div>
+            <div class="table-wrapper">
+                <table id="table-hs-source">
+                    <thead>
+                        <tr>
+                            <th>Fuente</th>
+                            <th class="th-num">Contactos</th>
+                            <th class="th-num">Ganados</th>
+                            <th class="th-num">Conv. rate</th>
+                            <th class="th-num">Deals con $</th>
+                            <th class="th-num">Revenue (EUR)</th>
+                        </tr>
+                    </thead>
+                    <tbody></tbody>
+                    <tfoot></tfoot>
+                </table>
+            </div>
+        </section>
+
+        <!-- Por estado y por pais en 2 columnas -->
+        <section class="charts-grid">
+            <div class="chart-card">
+                <div class="chart-header">
+                    <h2>Contactos por estado del lead</h2>
+                </div>
+                <div class="table-wrapper">
+                    <table id="table-hs-status">
+                        <thead>
+                            <tr>
+                                <th>Estado</th>
+                                <th class="th-num">Contactos</th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+            </div>
+            <div class="chart-card">
+                <div class="chart-header">
+                    <h2>Top pa&iacute;ses</h2>
+                </div>
+                <div class="table-wrapper">
+                    <table id="table-hs-country">
+                        <thead>
+                            <tr>
+                                <th>Pa&iacute;s</th>
+                                <th class="th-num">Contactos</th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
             </div>
         </section>
     </main>

@@ -1,4 +1,4 @@
-"""Capa de acceso a SQLite para los datos de Meta Ads."""
+"""Capa de acceso a SQLite para los datos de Meta Ads + HubSpot CRM."""
 
 import sqlite3
 from contextlib import contextmanager
@@ -60,6 +60,92 @@ CREATE TABLE IF NOT EXISTS sync_log (
 CREATE INDEX IF NOT EXISTS idx_insights_date ON insights_daily(date);
 CREATE INDEX IF NOT EXISTS idx_actions_date ON actions_daily(date);
 CREATE INDEX IF NOT EXISTS idx_actions_type ON actions_daily(action_type);
+
+-- ====================================================================
+-- HubSpot CRM
+-- ====================================================================
+
+CREATE TABLE IF NOT EXISTS hubspot_pipelines (
+    id              TEXT NOT NULL,
+    object_type     TEXT NOT NULL,        -- 'deals' o 'contacts'
+    label           TEXT,
+    display_order   INTEGER,
+    archived        INTEGER DEFAULT 0,
+    updated_at      TEXT,
+    PRIMARY KEY (id, object_type)
+);
+
+CREATE TABLE IF NOT EXISTS hubspot_pipeline_stages (
+    pipeline_id     TEXT NOT NULL,
+    stage_id        TEXT NOT NULL,
+    object_type     TEXT NOT NULL,
+    label           TEXT,
+    probability     REAL,                 -- 1.0 = won, 0.0 = lost, 0<x<1 = open
+    display_order   INTEGER,
+    archived        INTEGER DEFAULT 0,
+    updated_at      TEXT,
+    PRIMARY KEY (pipeline_id, stage_id)
+);
+
+CREATE TABLE IF NOT EXISTS hubspot_contacts (
+    id                                  TEXT PRIMARY KEY,
+    email                               TEXT,
+    firstname                           TEXT,
+    lastname                            TEXT,
+    createdate                          TEXT,
+    lastmodifieddate                    TEXT,
+    lifecyclestage                      TEXT,
+    pais                                TEXT,
+    fuentes_de_captacion_especificas    TEXT,
+    hs_lead_status                      TEXT,
+    hs_customer_agent_lead_status       TEXT,
+    updated_at                          TEXT
+);
+
+CREATE TABLE IF NOT EXISTS hubspot_deals (
+    id                              TEXT PRIMARY KEY,
+    dealname                        TEXT,
+    amount                          REAL,
+    pipeline                        TEXT,
+    dealstage                       TEXT,
+    createdate                      TEXT,
+    closedate                       TEXT,
+    hs_lastmodifieddate             TEXT,
+    hs_analytics_source             TEXT,
+    hs_analytics_source_data_1      TEXT,
+    hs_analytics_source_data_2      TEXT,
+    is_won                          INTEGER DEFAULT 0,
+    is_lost                         INTEGER DEFAULT 0,
+    updated_at                      TEXT
+);
+
+CREATE TABLE IF NOT EXISTS hubspot_deal_contacts (
+    deal_id     TEXT NOT NULL,
+    contact_id  TEXT NOT NULL,
+    PRIMARY KEY (deal_id, contact_id)
+);
+
+CREATE TABLE IF NOT EXISTS hubspot_sync_log (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    started_at          TEXT NOT NULL,
+    finished_at         TEXT,
+    contacts_count      INTEGER,
+    deals_count         INTEGER,
+    pipelines_count     INTEGER,
+    associations_count  INTEGER,
+    status              TEXT,
+    error               TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_hs_contacts_fuente   ON hubspot_contacts(fuentes_de_captacion_especificas);
+CREATE INDEX IF NOT EXISTS idx_hs_contacts_status   ON hubspot_contacts(hs_lead_status);
+CREATE INDEX IF NOT EXISTS idx_hs_contacts_pais     ON hubspot_contacts(pais);
+CREATE INDEX IF NOT EXISTS idx_hs_contacts_created  ON hubspot_contacts(createdate);
+CREATE INDEX IF NOT EXISTS idx_hs_deals_stage       ON hubspot_deals(dealstage);
+CREATE INDEX IF NOT EXISTS idx_hs_deals_won         ON hubspot_deals(is_won);
+CREATE INDEX IF NOT EXISTS idx_hs_deals_created     ON hubspot_deals(createdate);
+CREATE INDEX IF NOT EXISTS idx_hs_deals_closed      ON hubspot_deals(closedate);
+CREATE INDEX IF NOT EXISTS idx_hs_deal_contacts_c   ON hubspot_deal_contacts(contact_id);
 """
 
 
@@ -182,6 +268,176 @@ def log_sync_finish(conn, sync_id, campaigns_count, insights_count, actions_coun
         (campaigns_count, insights_count, actions_count, status, error, sync_id),
     )
 
+
+# ====================================================================
+# HubSpot upserts
+# ====================================================================
+
+def upsert_hubspot_pipeline(conn, p, object_type):
+    conn.execute(
+        """
+        INSERT INTO hubspot_pipelines (id, object_type, label, display_order, archived, updated_at)
+        VALUES (?, ?, ?, ?, ?, datetime('now'))
+        ON CONFLICT(id, object_type) DO UPDATE SET
+            label = excluded.label,
+            display_order = excluded.display_order,
+            archived = excluded.archived,
+            updated_at = datetime('now')
+        """,
+        (p.get("id"), object_type, p.get("label"), p.get("displayOrder"), 1 if p.get("archived") else 0),
+    )
+
+
+def upsert_hubspot_stage(conn, pipeline_id, s, object_type):
+    md = s.get("metadata") or {}
+    conn.execute(
+        """
+        INSERT INTO hubspot_pipeline_stages (pipeline_id, stage_id, object_type, label,
+                                              probability, display_order, archived, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
+        ON CONFLICT(pipeline_id, stage_id) DO UPDATE SET
+            label = excluded.label,
+            probability = excluded.probability,
+            display_order = excluded.display_order,
+            archived = excluded.archived,
+            updated_at = datetime('now')
+        """,
+        (
+            pipeline_id, s.get("id"), object_type, s.get("label"),
+            _to_float(md.get("probability")),
+            s.get("displayOrder"),
+            1 if s.get("archived") else 0,
+        ),
+    )
+
+
+def upsert_hubspot_contact(conn, c):
+    p = c.get("properties") or {}
+    conn.execute(
+        """
+        INSERT INTO hubspot_contacts (id, email, firstname, lastname, createdate, lastmodifieddate,
+                                       lifecyclestage, pais, fuentes_de_captacion_especificas,
+                                       hs_lead_status, hs_customer_agent_lead_status, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+        ON CONFLICT(id) DO UPDATE SET
+            email = excluded.email,
+            firstname = excluded.firstname,
+            lastname = excluded.lastname,
+            createdate = excluded.createdate,
+            lastmodifieddate = excluded.lastmodifieddate,
+            lifecyclestage = excluded.lifecyclestage,
+            pais = excluded.pais,
+            fuentes_de_captacion_especificas = excluded.fuentes_de_captacion_especificas,
+            hs_lead_status = excluded.hs_lead_status,
+            hs_customer_agent_lead_status = excluded.hs_customer_agent_lead_status,
+            updated_at = datetime('now')
+        """,
+        (
+            c.get("id"),
+            p.get("email"),
+            p.get("firstname"),
+            p.get("lastname"),
+            p.get("createdate"),
+            p.get("lastmodifieddate"),
+            p.get("lifecyclestage"),
+            p.get("pais"),
+            p.get("fuentes_de_captacion_especificas"),
+            p.get("hs_lead_status"),
+            p.get("hs_customer_agent_lead_status"),
+        ),
+    )
+
+
+def upsert_hubspot_deal(conn, d, stage_probability_map):
+    """Inserta/actualiza un deal calculando is_won/is_lost desde la prob de su stage."""
+    p = d.get("properties") or {}
+    stage = p.get("dealstage")
+    prob = stage_probability_map.get(stage)
+    is_won = 1 if prob == 1.0 else 0
+    is_lost = 1 if prob == 0.0 else 0
+
+    conn.execute(
+        """
+        INSERT INTO hubspot_deals (id, dealname, amount, pipeline, dealstage, createdate, closedate,
+                                    hs_lastmodifieddate, hs_analytics_source, hs_analytics_source_data_1,
+                                    hs_analytics_source_data_2, is_won, is_lost, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+        ON CONFLICT(id) DO UPDATE SET
+            dealname = excluded.dealname,
+            amount = excluded.amount,
+            pipeline = excluded.pipeline,
+            dealstage = excluded.dealstage,
+            createdate = excluded.createdate,
+            closedate = excluded.closedate,
+            hs_lastmodifieddate = excluded.hs_lastmodifieddate,
+            hs_analytics_source = excluded.hs_analytics_source,
+            hs_analytics_source_data_1 = excluded.hs_analytics_source_data_1,
+            hs_analytics_source_data_2 = excluded.hs_analytics_source_data_2,
+            is_won = excluded.is_won,
+            is_lost = excluded.is_lost,
+            updated_at = datetime('now')
+        """,
+        (
+            d.get("id"),
+            p.get("dealname"),
+            _to_float(p.get("amount")),
+            p.get("pipeline"),
+            stage,
+            p.get("createdate"),
+            p.get("closedate"),
+            p.get("hs_lastmodifieddate"),
+            p.get("hs_analytics_source"),
+            p.get("hs_analytics_source_data_1"),
+            p.get("hs_analytics_source_data_2"),
+            is_won,
+            is_lost,
+        ),
+    )
+
+
+def upsert_hubspot_deal_contact(conn, deal_id, contact_id):
+    conn.execute(
+        "INSERT OR IGNORE INTO hubspot_deal_contacts (deal_id, contact_id) VALUES (?, ?)",
+        (deal_id, contact_id),
+    )
+
+
+def clear_hubspot_deal_contacts_for_deal(conn, deal_id):
+    """Borra las asociaciones existentes de un deal antes de re-insertar (manejar deletes)."""
+    conn.execute("DELETE FROM hubspot_deal_contacts WHERE deal_id = ?", (deal_id,))
+
+
+def log_hubspot_sync_start(conn):
+    cur = conn.execute(
+        "INSERT INTO hubspot_sync_log (started_at, status) VALUES (datetime('now'), 'running')"
+    )
+    return cur.lastrowid
+
+
+def log_hubspot_sync_finish(conn, sync_id, contacts, deals, pipelines, associations, status, error=None):
+    conn.execute(
+        """
+        UPDATE hubspot_sync_log
+        SET finished_at = datetime('now'),
+            contacts_count = ?, deals_count = ?, pipelines_count = ?,
+            associations_count = ?, status = ?, error = ?
+        WHERE id = ?
+        """,
+        (contacts, deals, pipelines, associations, status, error, sync_id),
+    )
+
+
+def stage_probability_map(conn):
+    """Devuelve {stage_id: probability} para resolver is_won/is_lost de cada deal."""
+    rows = conn.execute(
+        "SELECT stage_id, probability FROM hubspot_pipeline_stages WHERE object_type = 'deals'"
+    ).fetchall()
+    return {r["stage_id"]: r["probability"] for r in rows}
+
+
+# ====================================================================
+# Helpers
+# ====================================================================
 
 def _to_float(v):
     if v is None or v == "":

@@ -211,6 +211,111 @@ h1, h2, h3 { font-weight: 600; letter-spacing: -0.01em; }
 .kpi-leads .kpi-value { color: var(--leads); }
 .kpi-cpl .kpi-value { color: var(--leads); }
 
+/* HubSpot KPIs */
+.kpi-hs-contacts .kpi-value { color: #0ea5e9; }
+.kpi-hs-won .kpi-value { color: var(--success); }
+.kpi-hs-revenue .kpi-value { color: var(--success); }
+.kpi-hs-revenue-meta .kpi-value { color: var(--accent); }
+.kpi-hs-revenue-google .kpi-value { color: #f97316; }
+.kpi-roas .kpi-value { color: var(--success); font-size: 32px; }
+.kpi-cpl-real .kpi-value { color: var(--leads); }
+.kpi-cac .kpi-value { color: var(--warning); }
+
+/* Section divider */
+.section-divider {
+    margin-top: 32px;
+    padding-top: 24px;
+    border-top: 1px dashed var(--border);
+}
+.section-title {
+    font-size: 22px;
+    color: var(--text);
+    margin-bottom: 6px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+.section-badge {
+    background: linear-gradient(135deg, #fb923c, #f97316);
+    color: #fff;
+    padding: 3px 10px;
+    border-radius: 12px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+}
+.section-desc {
+    color: var(--text-muted);
+    font-size: 13px;
+    margin: 0;
+}
+
+/* Funnel */
+.funnel-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 20px 24px;
+    box-shadow: var(--shadow-sm);
+}
+.funnel-stages {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    align-items: stretch;
+    margin-top: 8px;
+}
+.funnel-stage {
+    flex: 1 1 0;
+    min-width: 140px;
+    background: linear-gradient(135deg, var(--bg), #fff);
+    border: 1px solid var(--border);
+    border-left: 4px solid var(--accent);
+    border-radius: var(--radius-sm);
+    padding: 14px 16px;
+    position: relative;
+    transition: transform 0.15s;
+}
+.funnel-stage:hover { transform: translateY(-2px); box-shadow: var(--shadow); }
+.funnel-stage:nth-child(1) { border-left-color: #2563eb; }
+.funnel-stage:nth-child(2) { border-left-color: #7c3aed; }
+.funnel-stage:nth-child(3) { border-left-color: #0ea5e9; }
+.funnel-stage:nth-child(4) { border-left-color: #f59e0b; }
+.funnel-stage:nth-child(5) { border-left-color: #16a34a; }
+.funnel-stage:nth-child(6) { border-left-color: #15803d; background: linear-gradient(135deg, #dcfce7, #fff); }
+.funnel-stage-label {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-muted);
+    font-weight: 600;
+    margin-bottom: 8px;
+    line-height: 1.3;
+}
+.funnel-stage-value {
+    font-size: 20px;
+    font-weight: 700;
+    color: var(--text);
+    letter-spacing: -0.01em;
+    font-variant-numeric: tabular-nums;
+}
+.funnel-stage-unit {
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-left: 4px;
+}
+.funnel-stage-pct {
+    position: absolute;
+    top: 8px;
+    right: 12px;
+    font-size: 10px;
+    color: var(--text-muted);
+    background: var(--bg);
+    padding: 2px 6px;
+    border-radius: 8px;
+}
+
 /* === Charts grid === */
 .charts-grid {
     display: grid;
