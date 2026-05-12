@@ -1078,6 +1078,32 @@ async function chatSend(text) {
     }
 }
 
+function setupTabs() {
+    const tabs = $$('.tab-btn');
+    const panes = $$('.tab-pane');
+
+    const activate = (target) => {
+        tabs.forEach(b => b.classList.toggle('active', b.dataset.tab === target));
+        panes.forEach(p => p.classList.toggle('active', p.dataset.tab === target));
+        try { localStorage.setItem('dashboard-tab', target); } catch (e) {}
+        // Re-resize charts del tab activo (Chart.js no calcula bien si el canvas estaba display:none)
+        setTimeout(() => {
+            [chartTimeseries, chartTopCampaigns, chartShoppingCost, chartShoppingCpc, chartShoppingCtr]
+                .forEach(c => { if (c) try { c.resize(); } catch (e) {} });
+        }, 50);
+        // Scroll arriba al cambiar
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+    };
+
+    tabs.forEach(btn => btn.addEventListener('click', () => activate(btn.dataset.tab)));
+
+    // Restaurar ultima pestana usada
+    try {
+        const saved = localStorage.getItem('dashboard-tab');
+        if (saved && $(`.tab-btn[data-tab="${saved}"]`)) activate(saved);
+    } catch (e) {}
+}
+
 function setupCustomRangePicker() {
     const wrapper = $('#custom-range');
     const btn = $('#btn-custom-range');
@@ -1223,6 +1249,7 @@ function init() {
     });
 
     setupTableSort();
+    setupTabs();
     setupChatbot();
     loadCountrySelector();
     loadAll();

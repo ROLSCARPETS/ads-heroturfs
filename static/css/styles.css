@@ -31,7 +31,7 @@ body {
 
 h1, h2, h3 { font-weight: 600; letter-spacing: -0.01em; }
 
-/* === Sticky header (envuelve topbar + meta-bar) === */
+/* === Sticky header (envuelve topbar + meta-bar + tabs) === */
 .sticky-header {
     position: sticky;
     top: 0;
@@ -39,6 +39,47 @@ h1, h2, h3 { font-weight: 600; letter-spacing: -0.01em; }
     background: var(--surface);
     box-shadow: 0 1px 0 var(--border);
 }
+
+/* === Tabs (dentro de sticky-header) === */
+.tabs {
+    background: var(--surface);
+    padding: 0 32px;
+    display: flex;
+    gap: 4px;
+    border-bottom: 1px solid var(--border);
+    overflow-x: auto;
+    scrollbar-width: none;
+}
+.tabs::-webkit-scrollbar { display: none; }
+.tab-btn {
+    background: transparent;
+    border: none;
+    padding: 11px 18px;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-muted);
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    transition: all 0.15s;
+    font-family: inherit;
+    white-space: nowrap;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+.tab-btn:hover {
+    color: var(--text);
+    background: linear-gradient(to bottom, transparent, var(--bg));
+}
+.tab-btn.active {
+    color: var(--accent);
+    border-bottom-color: var(--accent);
+    font-weight: 600;
+}
+
+/* Tab panes */
+.tab-pane { display: none; }
+.tab-pane.active { display: block; }
 
 /* === Topbar === */
 .topbar {
