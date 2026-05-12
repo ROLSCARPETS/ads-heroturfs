@@ -935,6 +935,107 @@ h1, h2, h3 { font-weight: 600; letter-spacing: -0.01em; }
     padding: 16px 20px;
 }
 
+/* Tabla tipo Excel de la pestaña Shopping (similar a #weekly-table pero independiente) */
+.shopping-detail-table-section {
+    border-top: 1px solid var(--border);
+}
+.shopping-detail-header {
+    padding: 12px 20px;
+    background: var(--bg);
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+}
+.shopping-detail-hint {
+    font-size: 11px;
+    color: var(--text-muted);
+    font-style: italic;
+}
+
+/* Reusamos los estilos de #weekly-table aplicandolos tambien a #shopping-detail-table */
+#shopping-detail-table {
+    width: max-content;
+    min-width: 100%;
+    border-collapse: separate;
+    border-spacing: 0;
+    font-size: 12px;
+}
+#shopping-detail-table thead th {
+    background: var(--bg);
+    color: var(--text-muted);
+    font-weight: 600;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+    text-align: right;
+}
+#shopping-detail-table thead th.col-label {
+    text-align: left;
+    min-width: 220px;
+    width: 220px;
+}
+#shopping-detail-table thead th.col-total {
+    background: #fef3c7;
+    color: #92400e;
+    border-left: 1px solid var(--border);
+    border-right: 2px solid #fbbf24;
+}
+#shopping-detail-table thead th.col-period { min-width: 90px; }
+#shopping-detail-table tbody td {
+    padding: 7px 12px;
+    border-bottom: 1px solid var(--border);
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    color: var(--text);
+    white-space: nowrap;
+}
+#shopping-detail-table tbody td.col-label {
+    text-align: left;
+    color: var(--text);
+    padding-left: 28px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-weight: 400;
+}
+#shopping-detail-table tbody td.col-total {
+    background: #fffbeb;
+    font-weight: 600;
+    border-right: 2px solid #fbbf24;
+    color: #78350f;
+}
+/* Sticky primera columna */
+#shopping-detail-table thead th.col-label,
+#shopping-detail-table tbody td.col-label {
+    position: sticky;
+    left: 0;
+    background: var(--surface);
+    z-index: 2;
+    border-right: 1px solid var(--border);
+}
+#shopping-detail-table thead th.col-label { background: var(--bg); z-index: 3; }
+/* Section title (bloque por metrica) */
+#shopping-detail-table tbody tr.section-title td {
+    background: linear-gradient(135deg, var(--accent), #1d4ed8);
+    color: #fff;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    font-size: 11px;
+    padding: 8px 12px;
+    text-align: left;
+    position: sticky;
+    left: 0;
+    z-index: 3;
+}
+#shopping-detail-table tbody tr:hover td:not(.col-total) { background: var(--bg); }
+#shopping-detail-table tbody td.empty { color: var(--text-muted); font-weight: 300; }
+
 /* Barra de utilizacion de presupuesto */
 .util-cell {
     display: flex;

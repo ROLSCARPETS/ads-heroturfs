@@ -801,6 +801,64 @@ function buildShoppingChart(canvasId, payload, metric, yLabel, formatter, chartT
     });
 }
 
+// Definicion de bloques de la tabla "tipo Excel" de Shopping
+const SHOPPING_DETAIL_METRICS = [
+    { key: 'cost',          title: 'Coste',           format: 'eur',  totalKey: 'cost' },
+    { key: 'daily_budget',  title: 'Presupuesto/día (medio)', format: 'eur', totalKey: 'daily_budget' },
+    { key: 'budget_period', title: 'Presupuesto del periodo', format: 'eur', totalKey: 'budget_period' },
+    { key: 'utilization',   title: 'Utilización',     format: 'pct',  totalKey: 'utilization_pct' },
+    { key: 'clicks',        title: 'Clicks',          format: 'int',  totalKey: 'clicks' },
+    { key: 'impressions',   title: 'Impresiones',     format: 'int',  totalKey: 'impressions' },
+    { key: 'ctr',           title: 'CTR',             format: 'pct',  totalKey: 'ctr' },
+    { key: 'cpc',           title: 'CPC',             format: 'eur3', totalKey: 'cpc' },
+];
+
+function renderShoppingDetailTable(payload) {
+    const table = document.getElementById('shopping-detail-table');
+    if (!table) return;
+    const periods = payload.periods || [];
+    const allCountries = payload.countries || [];
+    const visibleCountries = allCountries.filter(c => !state.shoppingDisabledCountries.has(c));
+    const series = payload.series || {};
+    const totals = payload.totals || {};
+    const colspan = 2 + periods.length;
+
+    // Info
+    const info = $('#shopping-detail-info');
+    if (info) {
+        const granLabel = payload.granularity === 'monthly' ? 'meses' : payload.granularity === 'weekly' ? 'semanas' : 'días';
+        info.textContent = `${visibleCountries.length} países visibles · ${periods.length} ${granLabel}`;
+    }
+
+    // Cabecera
+    const thead = table.querySelector('thead');
+    let h = '<tr>';
+    h += `<th class="col-label">Métrica / País</th>`;
+    h += `<th class="col-total">Acumulado</th>`;
+    periods.forEach(p => { h += `<th class="col-period">${escapeHtml(p.label)}</th>`; });
+    h += '</tr>';
+    thead.innerHTML = h;
+
+    // Cuerpo
+    const tbody = table.querySelector('tbody');
+    let body = '';
+    SHOPPING_DETAIL_METRICS.forEach(m => {
+        body += `<tr class="section-title"><td colspan="${colspan}">${escapeHtml(m.title)}</td></tr>`;
+        visibleCountries.forEach(c => {
+            const total = totals[c] ? totals[c][m.totalKey] : null;
+            const values = (series[m.key] && series[m.key][c]) || [];
+            body += '<tr>';
+            body += `<td class="col-label">${flagImg(c)}<span style="color:${colorForCountry(c)};">●</span> ${escapeHtml(c)}</td>`;
+            body += `<td class="col-total">${fmtCell(total, m.format)}</td>`;
+            values.forEach(v => {
+                body += `<td class="col-period">${fmtCell(v, m.format)}</td>`;
+            });
+            body += '</tr>';
+        });
+    });
+    tbody.innerHTML = body;
+}
+
 function setupShoppingTableSort() {
     const ths = document.querySelectorAll('#table-shopping-totals thead th[data-sort]');
     ths.forEach(th => {
@@ -886,6 +944,9 @@ function renderShoppingComparison(payload, skipChipsRebuild = false) {
     chartShoppingCpc = buildShoppingChart('chart-shopping-cpc', payload, 'cpc', 'EUR / click', fmtCpcFn, 'line');
     chartShoppingCtr = buildShoppingChart('chart-shopping-ctr', payload, 'ctr', '%', fmtCtrFn, 'line');
 
+    // Tabla "tipo Excel" por periodos (debajo de los charts)
+    renderShoppingDetailTable(payload);
+
     // Tabla de totales con ordenacion segun state.shoppingSortBy/SortDir
     const tbody = $('#table-shopping-totals tbody');
     const sortKey = state.shoppingSortBy;
@@ -955,6 +1016,7 @@ function renderShoppingComparison(payload, skipChipsRebuild = false) {
 function fmtCell(value, format) {
     if (value === 0 || value === null || value === undefined) return '<span class="empty">-</span>';
     if (format === 'eur') return fmtEur.format(value) + ' €';
+    if (format === 'eur3') return fmtEur3.format(value) + ' €';
     if (format === 'pct') return value.toLocaleString('es-ES', {minimumFractionDigits:1, maximumFractionDigits:1}) + '%';
     if (format === 'x') return value.toLocaleString('es-ES', {minimumFractionDigits:2, maximumFractionDigits:2}) + 'x';
     return fmtInt.format(value);

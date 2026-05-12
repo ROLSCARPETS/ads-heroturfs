@@ -178,15 +178,19 @@ def _fetch_leads_by_campaign(conn, since, until):
     return {r["campaign_id"]: r["leads"] or 0 for r in rows}
 
 
-def _period_expr(granularity):
-    """Devuelve la expresion SQL para agrupar por dia/semana/mes."""
+def _period_expr(granularity, col="date"):
+    """Devuelve la expresion SQL para agrupar por dia/semana/mes.
+
+    `col` permite usar la expresion con un nombre de columna distinto (ej. 'bh.date')
+    cuando la tabla esta calificada por alias.
+    """
     if granularity == "weekly":
         # Lunes de la semana (ISO): substraer (weekday-1) dias, donde weekday: lun=1..dom=7
-        return "date(date, '-' || ((CAST(strftime('%w', date) AS INTEGER) + 6) % 7) || ' days')"
+        return f"date({col}, '-' || ((CAST(strftime('%w', {col}) AS INTEGER) + 6) % 7) || ' days')"
     if granularity == "monthly":
         # Primer dia del mes
-        return "date(date, 'start of month')"
-    return "date"
+        return f"date({col}, 'start of month')"
+    return col
 
 
 def _fetch_leads_by_period(conn, since, until, granularity="daily"):
@@ -1348,6 +1352,26 @@ def api_google_shopping_comparison():
             (since, until),
         ).fetchall()
 
+        # Presupuesto por (pais, periodo) usando histórico
+        period_expr_bh = _period_expr(granularity, "bh.date")
+        budget_period_rows_ts = conn.execute(
+            f"""
+            SELECT c.country country,
+                   {period_expr_bh} period,
+                   SUM(bh.daily_budget) total_budget,
+                   AVG(bh.daily_budget) avg_daily_budget,
+                   COUNT(DISTINCT bh.date) days_in_period
+            FROM google_budget_history bh
+            JOIN google_campaigns c ON c.id = bh.campaign_id
+            WHERE c.advertising_channel_type = 'SHOPPING'
+              AND c.status = 'ENABLED'
+              AND bh.date BETWEEN ? AND ?
+            GROUP BY c.country, period
+            ORDER BY c.country, period
+            """,
+            (since, until),
+        ).fetchall()
+
         # Presupuesto diario actual total por pais (solo campañas Shopping ENABLED).
         # Usado como referencia y para fallback si no hay historico.
         budget_rows = conn.execute(
@@ -1389,7 +1413,10 @@ def api_google_shopping_comparison():
     for r in rows:
         country = r["country"] or "(sin pais)"
         if country not in by_country:
-            by_country[country] = {"cost": [0.0] * n, "clicks": [0] * n, "impressions": [0] * n}
+            by_country[country] = {
+                "cost": [0.0] * n, "clicks": [0] * n, "impressions": [0] * n,
+                "daily_budget": [0.0] * n, "budget_period": [0.0] * n,
+            }
         i = period_idx.get(r["period"])
         if i is None:
             continue
@@ -1397,13 +1424,28 @@ def api_google_shopping_comparison():
         by_country[country]["clicks"][i] = r["clicks"] or 0
         by_country[country]["impressions"][i] = r["impressions"] or 0
 
+    # Rellenar daily_budget y budget_period por (pais, periodo)
+    for r in budget_period_rows_ts:
+        country = r["country"] or "(sin pais)"
+        if country not in by_country:
+            by_country[country] = {
+                "cost": [0.0] * n, "clicks": [0] * n, "impressions": [0] * n,
+                "daily_budget": [0.0] * n, "budget_period": [0.0] * n,
+            }
+        i = period_idx.get(r["period"])
+        if i is None:
+            continue
+        by_country[country]["daily_budget"][i] = r["avg_daily_budget"] or 0
+        by_country[country]["budget_period"][i] = r["total_budget"] or 0
+
     # Ordenar paises por gasto total descendente
     countries = sorted(by_country.keys(), key=lambda c: -sum(by_country[c]["cost"]))
 
     # Numero de dias del rango (para multiplicar daily_budget)
     days_in_range = (date.fromisoformat(until) - date.fromisoformat(since)).days + 1
 
-    series = {"cost": {}, "ctr": {}, "cpc": {}, "clicks": {}, "impressions": {}}
+    series = {"cost": {}, "ctr": {}, "cpc": {}, "clicks": {}, "impressions": {},
+              "daily_budget": {}, "budget_period": {}, "utilization": {}}
     totals = {}
     for c in countries:
         d = by_country[c]
@@ -1416,6 +1458,12 @@ def api_google_shopping_comparison():
         ]
         series["cpc"][c] = [
             round((d["cost"][i] / d["clicks"][i]) if d["clicks"][i] else 0, 3)
+            for i in range(n)
+        ]
+        series["daily_budget"][c] = [round(v, 2) for v in d["daily_budget"]]
+        series["budget_period"][c] = [round(v, 2) for v in d["budget_period"]]
+        series["utilization"][c] = [
+            round((d["cost"][i] / d["budget_period"][i] * 100) if d["budget_period"][i] > 0 else 0, 1)
             for i in range(n)
         ]
         total_cost = sum(d["cost"])
