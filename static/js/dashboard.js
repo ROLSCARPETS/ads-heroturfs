@@ -5,6 +5,8 @@ const state = {
     granularity: 'daily',     // del grafico de evolucion
     weeklyGranularity: 'weekly', // de la tabla semanal/mensual
     country: '',  // vacio = todos los paises
+    customSince: null,        // YYYY-MM-DD si days === 'custom'
+    customUntil: null,
     campaigns: [],
     sortBy: 'spend',
     sortDir: 'desc',
@@ -12,7 +14,12 @@ const state = {
 
 function buildQuery(extra = {}) {
     const params = new URLSearchParams();
-    params.set('days', state.days);
+    if (state.days === 'custom' && state.customSince && state.customUntil) {
+        params.set('since', state.customSince);
+        params.set('until', state.customUntil);
+    } else {
+        params.set('days', state.days);
+    }
     if (state.country) params.set('country', state.country);
     Object.entries(extra).forEach(([k, v]) => params.set(k, v));
     return params.toString();
@@ -951,6 +958,68 @@ async function chatSend(text) {
     }
 }
 
+function setupCustomRangePicker() {
+    const wrapper = $('#custom-range');
+    const btn = $('#btn-custom-range');
+    const sinceInput = $('#custom-since');
+    const untilInput = $('#custom-until');
+    const apply = $('#custom-apply');
+    const cancel = $('#custom-cancel');
+    const label = $('#custom-range-label');
+
+    // Valores por defecto: ultimos 30 dias
+    const today = new Date();
+    const monthAgo = new Date(today);
+    monthAgo.setDate(today.getDate() - 29);
+    sinceInput.value = monthAgo.toISOString().substring(0, 10);
+    untilInput.value = today.toISOString().substring(0, 10);
+    untilInput.max = today.toISOString().substring(0, 10);
+
+    btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        wrapper.classList.toggle('open');
+    });
+    document.addEventListener('click', (e) => {
+        if (!wrapper.contains(e.target)) wrapper.classList.remove('open');
+    });
+    cancel.addEventListener('click', () => wrapper.classList.remove('open'));
+
+    apply.addEventListener('click', () => {
+        const since = sinceInput.value;
+        const until = untilInput.value;
+        if (!since || !until) {
+            toast('Debes elegir ambas fechas', 'error');
+            return;
+        }
+        if (since > until) {
+            toast('La fecha "Desde" debe ser anterior a "Hasta"', 'error');
+            return;
+        }
+        state.days = 'custom';
+        state.customSince = since;
+        state.customUntil = until;
+
+        // Marcar este boton como activo, desmarcar los presets
+        $$('.range-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+
+        // Etiqueta corta
+        const sDate = since.split('-').reverse().slice(0, 2).join('/'); // dd/mm
+        const uDate = until.split('-').reverse().slice(0, 2).join('/');
+        label.textContent = `${sDate} - ${uDate}`;
+
+        // Si el rango es largo, forzar granularidad mensual
+        const days = (new Date(until) - new Date(since)) / 86400000 + 1;
+        if (days >= 180) {
+            state.granularity = 'monthly';
+            $$('.gran-btn').forEach(b => b.classList.toggle('active', b.dataset.gran === 'monthly'));
+        }
+
+        wrapper.classList.remove('open');
+        loadAll();
+    });
+}
+
 function setupChatbot() {
     const widget = $('#chat-widget');
     $('#chat-toggle').addEventListener('click', () => {
@@ -972,13 +1041,17 @@ function setupChatbot() {
 
 // === Init ===
 function init() {
-    // Selector de rango
-    $$('.range-btn').forEach(btn => {
+    // Selector de rango (preset)
+    $$('.range-btn[data-days]').forEach(btn => {
         btn.addEventListener('click', () => {
             $$('.range-btn').forEach(b => b.classList.remove('active'));
             btn.classList.add('active');
             // "all" se pasa tal cual; los numericos se mantienen como string
             state.days = btn.dataset.days;
+            state.customSince = null;
+            state.customUntil = null;
+            // Reset etiqueta del boton personalizado
+            $('#custom-range-label').textContent = 'Personalizado';
             // Si pasamos a "Todo" o "12 meses", forzar granularidad mensual por defecto
             if (state.days === 'all' || parseInt(state.days, 10) >= 180) {
                 state.granularity = 'monthly';
@@ -987,6 +1060,9 @@ function init() {
             loadAll();
         });
     });
+
+    // Selector de rango personalizado
+    setupCustomRangePicker();
 
     // Selector de granularidad (solo afecta al grafico de evolucion)
     $$('.gran-btn').forEach(btn => {

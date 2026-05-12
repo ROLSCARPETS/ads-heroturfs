@@ -31,6 +31,26 @@
                 <button class="range-btn" data-days="90">90 d&iacute;as</button>
                 <button class="range-btn" data-days="365">12 meses</button>
                 <button class="range-btn" data-days="all">Todo</button>
+                <div class="custom-range" id="custom-range">
+                    <button class="range-btn" id="btn-custom-range" type="button" title="Rango personalizado">
+                        <span class="range-btn-icon">&#128197;</span>
+                        <span id="custom-range-label">Personalizado</span>
+                    </button>
+                    <div class="custom-range-popover" id="custom-range-popover">
+                        <div class="custom-range-row">
+                            <label>Desde</label>
+                            <input type="date" id="custom-since">
+                        </div>
+                        <div class="custom-range-row">
+                            <label>Hasta</label>
+                            <input type="date" id="custom-until">
+                        </div>
+                        <div class="custom-range-actions">
+                            <button type="button" id="custom-cancel" class="btn btn-secondary">Cancelar</button>
+                            <button type="button" id="custom-apply" class="btn btn-primary">Aplicar</button>
+                        </div>
+                    </div>
+                </div>
             </div>
             <button id="btn-sync" class="btn btn-primary" title="Sincronizar Meta Ads">
                 <span class="sync-icon">&#x21bb;</span>

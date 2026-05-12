@@ -108,6 +108,26 @@ def _resolve_range(days_param):
     return since.isoformat(), until.isoformat(), days_label
 
 
+def _range_from_request():
+    """Lee since/until/days de la request actual y devuelve (since, until, days_label).
+
+    Si la request lleva 'since' y 'until' (YYYY-MM-DD), usa esos directamente.
+    En caso contrario, recurre a _resolve_range con el param 'days'.
+    """
+    since_p = request.args.get("since")
+    until_p = request.args.get("until")
+    if since_p and until_p:
+        try:
+            s = date.fromisoformat(since_p[:10])
+            u = date.fromisoformat(until_p[:10])
+            if s > u:
+                s, u = u, s
+            return s.isoformat(), u.isoformat(), (u - s).days + 1
+        except (ValueError, TypeError):
+            pass
+    return _resolve_range(request.args.get("days", "30"))
+
+
 def _previous_range(since_iso, until_iso):
     """Devuelve (prev_since, prev_until) ISO con la misma duracion, justo antes."""
     s = date.fromisoformat(since_iso)
@@ -230,7 +250,7 @@ def _meta_kpis(conn, since, until, country):
 def api_kpis():
     days_param = request.args.get("days", "30")
     country = request.args.get("country") or None
-    since, until, days = _resolve_range(days_param)
+    since, until, days = _range_from_request()
     prev_since, prev_until = _previous_range(since, until)
 
     with _get_conn() as conn:
@@ -269,7 +289,7 @@ def api_timeseries():
     granularity = request.args.get("granularity", "daily")
     if granularity not in ("daily", "weekly", "monthly"):
         granularity = "daily"
-    since, until, _days = _resolve_range(days_param)
+    since, until, _days = _range_from_request()
     period_expr = _period_expr(granularity)
 
     sql = (
@@ -318,7 +338,7 @@ def api_campaigns():
     """
     days_param = request.args.get("days", "30")
     country = request.args.get("country") or None
-    since, until, days = _resolve_range(days_param)
+    since, until, days = _range_from_request()
 
     sql = (
         "SELECT c.id, c.name, c.effective_status, c.objective, c.country, "
@@ -402,6 +422,22 @@ def _hubspot_date_range(days_param):
     return since_d.isoformat() + "T00:00:00.000Z", until.isoformat() + "T23:59:59.999Z"
 
 
+def _hubspot_range_from_request():
+    """Como _hubspot_date_range pero respeta since/until custom de la request."""
+    since_p = request.args.get("since")
+    until_p = request.args.get("until")
+    if since_p and until_p:
+        try:
+            s = date.fromisoformat(since_p[:10])
+            u = date.fromisoformat(until_p[:10])
+            if s > u:
+                s, u = u, s
+            return f"{s.isoformat()}T00:00:00.000Z", f"{u.isoformat()}T23:59:59.999Z"
+        except (ValueError, TypeError):
+            pass
+    return _hubspot_date_range(request.args.get("days", "30"))
+
+
 def _hubspot_kpis(conn, since, until, country):
     """Calcula KPIs HubSpot principales para un rango (returns dict)."""
     pais_clause = " AND pais = ?" if country else ""
@@ -483,7 +519,7 @@ def api_hubspot_kpis():
     """KPIs principales de HubSpot + comparativa con periodo anterior."""
     days_param = request.args.get("days", "30")
     country = request.args.get("country") or None
-    since, until = _hubspot_date_range(days_param)
+    since, until = _hubspot_range_from_request()
     prev_since, prev_until = _hubspot_previous_range(since, until)
 
     with _get_conn() as conn:
@@ -599,8 +635,8 @@ def api_hubspot_funnel():
     """Funnel completo Meta + comparativa con periodo anterior."""
     days_param = request.args.get("days", "30")
     country = request.args.get("country") or None
-    since_meta, until_meta, _days = _resolve_range(days_param)
-    since_hs, until_hs = _hubspot_date_range(days_param)
+    since_meta, until_meta, _days = _range_from_request()
+    since_hs, until_hs = _hubspot_range_from_request()
     prev_since_meta, prev_until_meta = _previous_range(since_meta, until_meta)
     prev_since_hs, prev_until_hs = _hubspot_previous_range(since_hs, until_hs)
 
@@ -640,7 +676,7 @@ def api_hubspot_by_source():
     """Distribucion de contactos y revenue por fuente de captacion. Filtro country opcional."""
     days_param = request.args.get("days", "30")
     country = request.args.get("country") or None
-    since, until = _hubspot_date_range(days_param)
+    since, until = _hubspot_range_from_request()
 
     pais_clause = " AND pais = ?" if country else ""
     pais_clause_c = " AND c.pais = ?" if country else ""
@@ -713,7 +749,7 @@ def api_hubspot_by_status():
     """Distribucion de contactos por hs_lead_status. Filtro country opcional."""
     days_param = request.args.get("days", "30")
     country = request.args.get("country") or None
-    since, until = _hubspot_date_range(days_param)
+    since, until = _hubspot_range_from_request()
 
     pais_clause = " AND pais = ?" if country else ""
     pais_params = [country] if country else []
@@ -884,7 +920,7 @@ def api_countries():
 def api_hubspot_by_country():
     """Top paises por contactos."""
     days_param = request.args.get("days", "30")
-    since, until = _hubspot_date_range(days_param)
+    since, until = _hubspot_range_from_request()
 
     with _get_conn() as conn:
         rows = conn.execute(
@@ -958,7 +994,7 @@ def api_weekly():
     if granularity not in ("daily", "weekly", "monthly"):
         granularity = "weekly"
 
-    since, until, _days = _resolve_range(days_param)
+    since, until, _days = _range_from_request()
     since_hs = _date_to_hubspot_iso(since)
     until_hs = _date_to_hubspot_iso(until, end=True)
 
@@ -1202,7 +1238,7 @@ def api_google_kpis():
     """KPIs de Google Ads + comparativa periodo anterior."""
     days_param = request.args.get("days", "30")
     country = request.args.get("country") or None
-    since, until, days = _resolve_range(days_param)
+    since, until, days = _range_from_request()
     prev_since, prev_until = _previous_range(since, until)
 
     with _get_conn() as conn:
@@ -1231,7 +1267,7 @@ def api_google_campaigns():
     """Tabla de campanas Google con metricas agregadas."""
     days_param = request.args.get("days", "30")
     country = request.args.get("country") or None
-    since, until, _days = _resolve_range(days_param)
+    since, until, _days = _range_from_request()
 
     sql = (
         "SELECT c.id, c.name, c.status, c.advertising_channel_type, c.country, "
