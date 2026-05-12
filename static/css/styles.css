@@ -867,6 +867,52 @@ h1, h2, h3 { font-weight: 600; letter-spacing: -0.01em; }
     background: var(--bg);
     gap: 12px;
 }
+/* Chips de paises (toggle visibilidad en los 3 graficos) */
+.shopping-country-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 10px 20px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+    align-items: center;
+}
+.shopping-country-chips-label {
+    font-size: 11px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    margin-right: 4px;
+}
+.country-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 4px 10px;
+    border-radius: 14px;
+    border: 1.5px solid;
+    background: var(--surface);
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 500;
+    transition: opacity 0.15s, transform 0.1s;
+    user-select: none;
+}
+.country-chip:hover { transform: translateY(-1px); }
+.country-chip.disabled {
+    opacity: 0.35;
+    text-decoration: line-through;
+    text-decoration-thickness: 1.5px;
+}
+.country-chip-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+}
+.country-chip .flag-img { margin-right: 0; }
+
 .shopping-grid {
     display: grid;
     grid-template-columns: repeat(3, 1fr);

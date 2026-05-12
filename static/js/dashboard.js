@@ -11,6 +11,8 @@ const state = {
     campaigns: [],
     sortBy: 'spend',
     sortDir: 'desc',
+    shoppingDisabledCountries: new Set(), // paises ocultos en los charts de Shopping
+    shoppingPayload: null,    // cache del ultimo payload para re-render sin refetch
 };
 
 // Paleta de colores por pais para los graficos comparativos
@@ -735,35 +737,49 @@ let chartShoppingCost = null;
 let chartShoppingCpc = null;
 let chartShoppingCtr = null;
 
-function buildShoppingChart(canvasId, payload, metric, yLabel, formatter) {
+function buildShoppingChart(canvasId, payload, metric, yLabel, formatter, chartType = 'line') {
     const periods = payload.periods || [];
-    const countries = payload.countries || [];
     const series = (payload.series && payload.series[metric]) || {};
+    // Filtrar paises desactivados
+    const countries = (payload.countries || []).filter(c => !state.shoppingDisabledCountries.has(c));
     const labels = periods.map(p => p.label);
-    const datasets = countries.map(c => ({
-        label: c,
-        data: series[c] || [],
-        borderColor: colorForCountry(c),
-        backgroundColor: colorForCountry(c) + '22',
-        fill: false,
-        tension: 0.3,
-        borderWidth: 2,
-        pointRadius: 2,
-        pointHoverRadius: 5,
-    }));
+
+    const datasets = countries.map(c => {
+        const color = colorForCountry(c);
+        if (chartType === 'bar') {
+            return {
+                label: c,
+                data: series[c] || [],
+                backgroundColor: color,
+                borderColor: color,
+                borderWidth: 0,
+                borderRadius: 4,
+                maxBarThickness: 28,
+            };
+        }
+        return {
+            label: c,
+            data: series[c] || [],
+            borderColor: color,
+            backgroundColor: color + '22',
+            fill: false,
+            tension: 0.3,
+            borderWidth: 2,
+            pointRadius: 2,
+            pointHoverRadius: 5,
+        };
+    });
     const ctx = document.getElementById(canvasId).getContext('2d');
     return new Chart(ctx, {
-        type: 'line',
+        type: chartType,
         data: { labels, datasets },
         options: {
             responsive: true,
             maintainAspectRatio: false,
             interaction: { mode: 'index', intersect: false },
             plugins: {
-                legend: {
-                    position: 'top',
-                    labels: { boxWidth: 10, font: { size: 11 }, padding: 8 },
-                },
+                // Ocultamos legend porque ya tenemos los chips arriba
+                legend: { display: false },
                 tooltip: {
                     callbacks: {
                         label: (ctx) => `${ctx.dataset.label}: ${formatter(ctx.parsed.y)}`,
@@ -776,19 +792,67 @@ function buildShoppingChart(canvasId, payload, metric, yLabel, formatter) {
                     title: { display: true, text: yLabel },
                     grid: { color: 'rgba(15,23,42,0.05)' },
                     ticks: { callback: (v) => formatter(v), font: { size: 10 } },
+                    beginAtZero: chartType === 'bar',
                 },
             },
         },
     });
 }
 
-function renderShoppingComparison(payload) {
+function renderShoppingCountryChips(payload) {
+    const cont = $('#shopping-country-chips');
+    if (!cont) return;
+    const countries = payload.countries || [];
+    if (!countries.length) {
+        cont.innerHTML = '';
+        return;
+    }
+    const items = ['<span class="shopping-country-chips-label">Países:</span>'];
+    countries.forEach(c => {
+        const disabled = state.shoppingDisabledCountries.has(c);
+        const color = colorForCountry(c);
+        items.push(`
+            <span class="country-chip ${disabled ? 'disabled' : ''}" data-country="${escapeHtml(c)}" style="border-color:${color};color:${color};">
+                <span class="country-chip-dot" style="background:${color};"></span>
+                ${flagImg(c)}<span>${escapeHtml(c)}</span>
+            </span>
+        `);
+    });
+    cont.innerHTML = items.join('');
+
+    // Hooks click - toggle visibilidad
+    cont.querySelectorAll('.country-chip').forEach(chip => {
+        chip.addEventListener('click', () => {
+            const c = chip.dataset.country;
+            if (state.shoppingDisabledCountries.has(c)) {
+                state.shoppingDisabledCountries.delete(c);
+            } else {
+                state.shoppingDisabledCountries.add(c);
+            }
+            // Re-render solo los charts con el payload cacheado (sin re-fetch)
+            if (state.shoppingPayload) renderShoppingComparison(state.shoppingPayload, true);
+        });
+    });
+}
+
+function renderShoppingComparison(payload, skipChipsRebuild = false) {
     if (!payload || !payload.countries) return;
+    // Cachear payload para re-render rapido al togglear paises
+    state.shoppingPayload = payload;
 
     const info = $('#shopping-info');
     if (info) {
         const granLabel = payload.granularity === 'monthly' ? 'meses' : payload.granularity === 'weekly' ? 'semanas' : 'días';
-        info.textContent = `${payload.periods.length} ${granLabel} · ${payload.since} a ${payload.until} · ${payload.countries.length} países`;
+        const visibles = payload.countries.filter(c => !state.shoppingDisabledCountries.has(c)).length;
+        info.textContent = `${payload.periods.length} ${granLabel} · ${payload.since} a ${payload.until} · ${visibles}/${payload.countries.length} países`;
+    }
+
+    if (!skipChipsRebuild) renderShoppingCountryChips(payload);
+    else {
+        // Solo actualizar clases (sin re-construir DOM)
+        document.querySelectorAll('#shopping-country-chips .country-chip').forEach(chip => {
+            chip.classList.toggle('disabled', state.shoppingDisabledCountries.has(chip.dataset.country));
+        });
     }
 
     if (chartShoppingCost) chartShoppingCost.destroy();
@@ -799,9 +863,9 @@ function renderShoppingComparison(payload) {
     const fmtCpcFn = (v) => fmtEur3.format(v || 0) + ' €';
     const fmtCtrFn = (v) => (v || 0).toLocaleString('es-ES', { maximumFractionDigits: 2 }) + '%';
 
-    chartShoppingCost = buildShoppingChart('chart-shopping-cost', payload, 'cost', 'EUR', fmtEurFn);
-    chartShoppingCpc = buildShoppingChart('chart-shopping-cpc', payload, 'cpc', 'EUR / click', fmtCpcFn);
-    chartShoppingCtr = buildShoppingChart('chart-shopping-ctr', payload, 'ctr', '%', fmtCtrFn);
+    chartShoppingCost = buildShoppingChart('chart-shopping-cost', payload, 'cost', 'EUR', fmtEurFn, 'bar');
+    chartShoppingCpc = buildShoppingChart('chart-shopping-cpc', payload, 'cpc', 'EUR / click', fmtCpcFn, 'line');
+    chartShoppingCtr = buildShoppingChart('chart-shopping-ctr', payload, 'ctr', '%', fmtCtrFn, 'line');
 
     // Tabla de totales (ordenada por gasto descendente)
     const tbody = $('#table-shopping-totals tbody');
