@@ -83,6 +83,7 @@ const fetchHsByStatus = () => fetchJson(`/api/hubspot/by-status?${buildQuery()}`
 const fetchHsByCountry = ()=> fetchJson(`/api/hubspot/by-country?${buildQuery()}`);
 const fetchCountries = ()  => fetchJson('/api/countries');
 const fetchWeekly = ()     => fetchJson(`/api/weekly?${buildQuery({granularity: state.weeklyGranularity})}`);
+const fetchAlerts = ()     => fetchJson(`/api/alerts${state.country ? '?country=' + encodeURIComponent(state.country) : ''}`);
 
 // Google Ads APIs
 const fetchGoogleKpis = ()      => fetchJson(`/api/google/kpis?${buildQuery()}`);
@@ -453,13 +454,15 @@ function csvCell(v) {
 // === Carga principal ===
 async function loadAll() {
     try {
-        const [k, ts, cs, hsK, hsF, hsSrc, hsSt, hsCo, wk, gK, gCs] = await Promise.all([
+        const [k, ts, cs, hsK, hsF, hsSrc, hsSt, hsCo, wk, gK, gCs, al] = await Promise.all([
             fetchKpis(), fetchTimeseries(), fetchCampaigns(),
             fetchHsKpis(), fetchHsFunnel(), fetchHsBySource(),
             fetchHsByStatus(), fetchHsByCountry(),
             fetchWeekly(),
             fetchGoogleKpis(), fetchGoogleCampaigns(),
+            fetchAlerts(),
         ]);
+        renderAlerts(al);
         renderKpis(k);
         renderTimeseries(ts);
         state.campaigns = cs;
@@ -476,6 +479,41 @@ async function loadAll() {
     } catch (e) {
         toast('Error cargando datos: ' + e.message, 'error');
     }
+}
+
+// === Alerts render ===
+function renderAlerts(payload) {
+    const bar = $('#alerts-bar');
+    const list = $('#alerts-list');
+    const alerts = payload.alerts || [];
+    if (!alerts.length) {
+        bar.style.display = 'none';
+        return;
+    }
+    bar.style.display = 'block';
+    $('#alerts-count').textContent = alerts.length;
+    $('#alerts-period').textContent = `${payload.current_period} vs ${payload.previous_period}`;
+
+    list.innerHTML = alerts.map(a => {
+        const change = a.change_pct;
+        const changeStr = change === null ? 'nuevo' : (change > 0 ? '+' : '') + change.toLocaleString('es-ES', { maximumFractionDigits: 0 }) + '%';
+        const changeCls = change !== null && change < 0 ? 'change-negative' : (change !== null && change > 0 ? 'change-positive' : '');
+        const arrow = change === null ? '·' : (change < 0 ? '↓' : '↑');
+        return `
+            <div class="alert-chip severity-${a.severity}">
+                <div class="alert-chip-top">
+                    <div class="alert-chip-tags">
+                        <span class="alert-chip-tag tag-${a.channel}">${a.channel}</span>
+                        <span class="alert-chip-tag tag-${a.type}">${a.type}</span>
+                        ${a.country ? `${flagImg(a.country)}` : ''}
+                    </div>
+                    <span class="alert-chip-change ${changeCls}">${arrow} ${changeStr}</span>
+                </div>
+                <div class="alert-chip-name" title="${escapeHtml(a.campaign_name)}">${escapeHtml(a.campaign_name)}</div>
+                <div class="alert-chip-vals">${fmtEur.format(a.spend_previous)} € → ${fmtEur.format(a.spend_current)} €</div>
+            </div>
+        `;
+    }).join('');
 }
 
 // === Google Ads render ===

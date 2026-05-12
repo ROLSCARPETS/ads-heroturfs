@@ -56,6 +56,18 @@
         <span id="last-sync-hs" class="last-sync">HubSpot: -</span>
     </div>
 
+    <!-- Alertas (solo se renderiza si hay) -->
+    <div id="alerts-bar" class="alerts-bar" style="display:none;">
+        <div class="alerts-header">
+            <h2 class="alerts-title">
+                <span class="alerts-icon">&#128276;</span>
+                Alertas <span id="alerts-count" class="alerts-count"></span>
+            </h2>
+            <span id="alerts-period" class="alerts-period"></span>
+        </div>
+        <div id="alerts-list" class="alerts-list"></div>
+    </div>
+
     <main class="content">
         <!-- KPIs -->
         <section class="kpi-grid">

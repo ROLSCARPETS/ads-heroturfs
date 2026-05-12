@@ -654,6 +654,136 @@ def api_hubspot_by_status():
     return jsonify([{"estado": r["estado"], "contactos": r["c"]} for r in rows])
 
 
+@app.route("/api/alerts")
+def api_alerts():
+    """Compara coste por campana entre ultimos 7 dias vs anteriores 7 dias.
+
+    Genera alertas cuando una campana ACTIVA cae mas de un umbral (default 30%).
+    Tambien detecta:
+    - STOPPED: gasto bajo a 0 (estaba activa)
+    - BOOST: gasto subio >100% (positivo, util saberlo)
+    """
+    threshold_pct = float(request.args.get("threshold", "30"))    # default 30%
+    min_spend = float(request.args.get("min_spend", "30"))        # ignorar campanas con <30 EUR de gasto en semana pasada
+    country = request.args.get("country") or None
+
+    today = date.today()
+    cur_since = (today - timedelta(days=6)).isoformat()       # ultimos 7 dias (incluyendo hoy)
+    cur_until = today.isoformat()
+    prev_since = (today - timedelta(days=13)).isoformat()     # 7 dias anteriores
+    prev_until = (today - timedelta(days=7)).isoformat()
+
+    def _campaign_spend_by_window(table_insights, table_campaigns, since_iso, until_iso):
+        sql = (
+            f"SELECT c.id, c.name, c.country, c.effective_status status, "
+            f"SUM(i.{'spend' if 'meta' in table_insights or table_insights == 'insights_daily' else 'cost'}) sp "
+            f"FROM {table_insights} i JOIN {table_campaigns} c ON c.id = i.campaign_id "
+            "WHERE i.date BETWEEN ? AND ? "
+        )
+        params = [since_iso, until_iso]
+        if country:
+            sql += "AND c.country = ? "
+            params.append(country)
+        sql += "GROUP BY c.id"
+        return sql, params
+
+    def _ga_campaign_spend(since_iso, until_iso):
+        sql = (
+            "SELECT c.id, c.name, c.country, c.status, "
+            "SUM(i.cost) sp FROM google_insights_daily i "
+            "JOIN google_campaigns c ON c.id = i.campaign_id "
+            "WHERE i.date BETWEEN ? AND ? "
+        )
+        params = [since_iso, until_iso]
+        if country:
+            sql += "AND c.country = ? "
+            params.append(country)
+        sql += "GROUP BY c.id"
+        return sql, params
+
+    def _meta_campaign_spend(since_iso, until_iso):
+        sql = (
+            "SELECT c.id, c.name, c.country, c.effective_status status, "
+            "SUM(i.spend) sp FROM insights_daily i "
+            "JOIN campaigns c ON c.id = i.campaign_id "
+            "WHERE i.date BETWEEN ? AND ? "
+        )
+        params = [since_iso, until_iso]
+        if country:
+            sql += "AND c.country = ? "
+            params.append(country)
+        sql += "GROUP BY c.id"
+        return sql, params
+
+    alerts = []
+    with _get_conn() as conn:
+        for channel, query_fn in (("meta", _meta_campaign_spend), ("google", _ga_campaign_spend)):
+            sql_cur, p_cur = query_fn(cur_since, cur_until)
+            sql_prev, p_prev = query_fn(prev_since, prev_until)
+            cur = {r["id"]: dict(r) for r in conn.execute(sql_cur, p_cur).fetchall()}
+            prev = {r["id"]: dict(r) for r in conn.execute(sql_prev, p_prev).fetchall()}
+            all_ids = set(cur) | set(prev)
+            for cid in all_ids:
+                row_cur = cur.get(cid, {})
+                row_prev = prev.get(cid, {})
+                sp_cur = row_cur.get("sp") or 0
+                sp_prev = row_prev.get("sp") or 0
+                # Necesitamos al menos `min_spend` en alguna ventana para evitar ruido
+                if max(sp_cur, sp_prev) < min_spend:
+                    continue
+                # Calcular cambio
+                if sp_prev == 0:
+                    change = float("inf") if sp_cur > 0 else 0
+                else:
+                    change = (sp_cur - sp_prev) / sp_prev * 100
+
+                meta_row = row_cur if cid in cur else row_prev
+                severity = None
+                alert_type = None
+                if sp_cur == 0 and sp_prev >= min_spend:
+                    severity = "critical"
+                    alert_type = "STOPPED"
+                elif change <= -50:
+                    severity = "critical"
+                    alert_type = "DROP"
+                elif change <= -threshold_pct:
+                    severity = "warning"
+                    alert_type = "DROP"
+                elif change >= 100 and sp_cur >= min_spend:
+                    severity = "boost"
+                    alert_type = "BOOST"
+
+                if severity is None:
+                    continue
+
+                alerts.append({
+                    "channel": channel,
+                    "campaign_id": cid,
+                    "campaign_name": meta_row.get("name") or "(sin nombre)",
+                    "country": meta_row.get("country"),
+                    "status": meta_row.get("status"),
+                    "spend_current": round(sp_cur, 2),
+                    "spend_previous": round(sp_prev, 2),
+                    "change_pct": round(change, 1) if change != float("inf") else None,
+                    "severity": severity,
+                    "type": alert_type,
+                })
+
+    # Ordenar: critical primero, luego por cambio absoluto descendente
+    severity_rank = {"critical": 0, "warning": 1, "boost": 2}
+    alerts.sort(key=lambda a: (severity_rank[a["severity"]], -(abs(a["change_pct"]) if a["change_pct"] is not None else 999)))
+
+    return jsonify({
+        "generated_at": datetime.now().isoformat(timespec="seconds"),
+        "current_period": f"{cur_since} - {cur_until}",
+        "previous_period": f"{prev_since} - {prev_until}",
+        "threshold_pct": threshold_pct,
+        "min_spend": min_spend,
+        "count": len(alerts),
+        "alerts": alerts,
+    })
+
+
 @app.route("/api/countries")
 def api_countries():
     """Devuelve la lista de paises disponibles (campaigns Meta + Google + hubspot_contacts)."""
