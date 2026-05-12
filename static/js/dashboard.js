@@ -56,6 +56,8 @@ const $$ = (sel) => document.querySelectorAll(sel);
 const fmtInt = new Intl.NumberFormat('es-ES');
 const fmtEur = new Intl.NumberFormat('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const fmtEur3 = new Intl.NumberFormat('es-ES', { minimumFractionDigits: 3, maximumFractionDigits: 3 });
+// Formatter sin decimales (con separador de miles): para totales grandes tipo 1.128, 33.355
+const fmtEurBig = new Intl.NumberFormat('es-ES', { maximumFractionDigits: 0, useGrouping: true });
 const fmtPct = (v) => v.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + '%';
 
 // === Toast ===
@@ -142,7 +144,7 @@ function fmtForDelta(value, format) {
 
 // === Render KPIs ===
 function renderKpis(k) {
-    $('#kpi-spend').textContent = fmtEur.format(k.spend);
+    $('#kpi-spend').textContent = fmtEurBig.format(Math.round(k.spend));
     $('#kpi-impressions').textContent = fmtInt.format(k.impressions);
     $('#kpi-reach').textContent = fmtInt.format(k.reach);
     $('#kpi-clicks').textContent = fmtInt.format(k.clicks);
@@ -173,9 +175,9 @@ function renderKpis(k) {
 function renderHsKpis(k) {
     $('#hs-kpi-contacts').textContent = fmtInt.format(k.contacts_total);
     $('#hs-kpi-deals-won').textContent = fmtInt.format(k.deals_won);
-    $('#hs-kpi-revenue').textContent = fmtEur.format(k.revenue_won);
-    $('#hs-kpi-revenue-meta').textContent = fmtEur.format(k.revenue_meta);
-    $('#hs-kpi-revenue-google').textContent = fmtEur.format(k.revenue_google);
+    $('#hs-kpi-revenue').textContent = fmtEurBig.format(Math.round(k.revenue_won));
+    $('#hs-kpi-revenue-meta').textContent = fmtEurBig.format(Math.round(k.revenue_meta));
+    $('#hs-kpi-revenue-google').textContent = fmtEurBig.format(Math.round(k.revenue_google));
 
     $('#last-sync-hs').textContent = k.last_sync
         ? `HubSpot: ${formatDateTimeES(k.last_sync)}`
@@ -597,13 +599,13 @@ function renderAlerts(payload) {
 
 // === Google Ads render ===
 function renderGoogleKpis(k) {
-    $('#g-kpi-cost').textContent = fmtEur.format(k.cost);
+    $('#g-kpi-cost').textContent = fmtEurBig.format(Math.round(k.cost));
     $('#g-kpi-impressions').textContent = fmtInt.format(k.impressions);
     $('#g-kpi-clicks').textContent = fmtInt.format(k.clicks);
     $('#g-kpi-ctr').textContent = k.ctr.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     $('#g-kpi-cpc').textContent = fmtEur3.format(k.cpc);
     $('#g-kpi-conv').textContent = fmtInt.format(Math.round(k.conversions));
-    $('#g-kpi-revenue').textContent = fmtEur.format(k.revenue);
+    $('#g-kpi-revenue').textContent = fmtEurBig.format(Math.round(k.revenue));
     $('#g-kpi-roas').textContent = k.roas > 0 ? `${k.roas.toLocaleString('es-ES', {minimumFractionDigits:2, maximumFractionDigits:2})}x` : '-';
 
     // Delta vs periodo anterior
