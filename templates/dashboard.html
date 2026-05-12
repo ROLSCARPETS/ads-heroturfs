@@ -404,6 +404,42 @@
     <!-- Toast -->
     <div id="toast" class="toast"></div>
 
+    <!-- Chatbot widget -->
+    <div id="chat-widget" class="chat-widget">
+        <button id="chat-toggle" class="chat-toggle" title="Asistente IA">
+            <span class="chat-toggle-icon">&#10024;</span>
+            <span class="chat-toggle-label">Asistente IA</span>
+        </button>
+        <div id="chat-panel" class="chat-panel">
+            <div class="chat-header">
+                <div class="chat-header-left">
+                    <span class="chat-header-icon">&#10024;</span>
+                    <div>
+                        <div class="chat-header-title">Asistente Heroturfs</div>
+                        <div class="chat-header-sub">Pregunta sobre tus datos</div>
+                    </div>
+                </div>
+                <button id="chat-close" class="chat-close" title="Cerrar">&times;</button>
+            </div>
+            <div id="chat-messages" class="chat-messages">
+                <div class="chat-msg chat-msg-bot">
+                    Hola Fernando. Puedo responder preguntas sobre tus campañas Meta, Google y datos de HubSpot.
+                    Prueba con alguna de las sugerencias o escribe tu pregunta abajo.
+                </div>
+            </div>
+            <div class="chat-suggestions">
+                <button class="chat-suggestion" data-q="Dame un resumen de este mes">📊 Resumen mes</button>
+                <button class="chat-suggestion" data-q="¿Qué campaña tiene el mejor ROAS en los últimos 90 días?">🏆 Mejor ROAS</button>
+                <button class="chat-suggestion" data-q="¿Hay alguna campaña que esté cayendo o que deba revisar?">⚠️ Alertas</button>
+                <button class="chat-suggestion" data-q="Compara España vs Francia este mes">🌍 ES vs FR</button>
+            </div>
+            <form id="chat-form" class="chat-form">
+                <input id="chat-input" type="text" placeholder="Escribe tu pregunta..." autocomplete="off">
+                <button type="submit" class="chat-send" title="Enviar">&#10148;</button>
+            </form>
+        </div>
+    </div>
+
     <script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
 </body>
 </html>

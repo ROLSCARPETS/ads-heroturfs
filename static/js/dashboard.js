@@ -832,6 +832,139 @@ const doSync = () => doSyncSource('btn-sync', '/api/sync', 'Meta', 'Meta...');
 const doSyncGoogle = () => doSyncSource('btn-sync-google', '/api/google/sync', 'Google', 'Google...');
 const doSyncHs = () => doSyncSource('btn-sync-hs', '/api/hubspot/sync', 'HubSpot', 'HubSpot...');
 
+// === Chatbot ===
+const chatState = { history: [] };
+
+function chatAppendMessage(role, text, tools) {
+    const container = $('#chat-messages');
+    const div = document.createElement('div');
+    div.className = `chat-msg chat-msg-${role}`;
+    // Render markdown muy basico (negrita, codigo inline, listas y saltos)
+    div.innerHTML = role === 'bot' ? formatBotText(text) : escapeHtml(text);
+    if (tools && tools.length) {
+        const tt = document.createElement('div');
+        tt.className = 'chat-msg-tools';
+        tt.textContent = '🔧 ' + tools.map(t => t.name).join(', ');
+        div.appendChild(tt);
+    }
+    container.appendChild(div);
+    container.scrollTop = container.scrollHeight;
+    return div;
+}
+
+function chatAppendLoading() {
+    const container = $('#chat-messages');
+    const div = document.createElement('div');
+    div.className = 'chat-msg chat-msg-bot chat-msg-loading';
+    div.textContent = 'Pensando';
+    container.appendChild(div);
+    container.scrollTop = container.scrollHeight;
+    return div;
+}
+
+function chatAppendError(text) {
+    const container = $('#chat-messages');
+    const div = document.createElement('div');
+    div.className = 'chat-msg chat-msg-bot chat-msg-error';
+    div.textContent = text;
+    container.appendChild(div);
+    container.scrollTop = container.scrollHeight;
+}
+
+function formatBotText(s) {
+    if (!s) return '';
+    // Basico: escapar HTML primero, despues sustituciones de markdown
+    let html = escapeHtml(s);
+    // **bold** -> <strong>
+    html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+    // `code` -> <code>
+    html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
+    // Tablas markdown (linea con | ... |)
+    const lines = html.split('\n');
+    const out = [];
+    let inTable = false;
+    for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        const isRow = /^\s*\|.*\|\s*$/.test(line);
+        const isSep = /^\s*\|[\s|:-]+\|\s*$/.test(line);
+        if (isRow && !isSep) {
+            if (!inTable) { out.push('<table>'); inTable = true; }
+            const cells = line.trim().slice(1, -1).split('|').map(c => c.trim());
+            // Comprobar si la linea siguiente es separador (=> header)
+            const isHeader = lines[i + 1] && /^\s*\|[\s|:-]+\|\s*$/.test(lines[i + 1]);
+            const tag = isHeader ? 'th' : 'td';
+            out.push('<tr>' + cells.map(c => `<${tag}>${c}</${tag}>`).join('') + '</tr>');
+        } else if (isSep) {
+            // separador de header, no renderizamos
+        } else {
+            if (inTable) { out.push('</table>'); inTable = false; }
+            out.push(line);
+        }
+    }
+    if (inTable) out.push('</table>');
+    return out.join('<br>').replace(/<br><table>/g, '<table>').replace(/<\/table><br>/g, '</table>');
+}
+
+async function chatSend(text) {
+    if (!text || !text.trim()) return;
+    const userMsg = text.trim();
+    chatAppendMessage('user', userMsg);
+    chatState.history.push({ role: 'user', content: userMsg });
+
+    const loading = chatAppendLoading();
+    const sendBtn = $('.chat-send');
+    const input = $('#chat-input');
+    sendBtn.disabled = true;
+    input.disabled = true;
+
+    try {
+        const r = await fetch('/api/chat', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                messages: chatState.history,
+                country: state.country || null,
+            }),
+        });
+        loading.remove();
+        if (!r.ok) {
+            const err = await r.json().catch(() => ({}));
+            chatAppendError('Error: ' + (err.error || `HTTP ${r.status}`));
+            return;
+        }
+        const data = await r.json();
+        chatAppendMessage('bot', data.reply, data.tools_used);
+        chatState.history.push({ role: 'assistant', content: data.reply });
+    } catch (e) {
+        loading.remove();
+        chatAppendError('Error de red: ' + e.message);
+    } finally {
+        sendBtn.disabled = false;
+        input.disabled = false;
+        input.value = '';
+        input.focus();
+    }
+}
+
+function setupChatbot() {
+    const widget = $('#chat-widget');
+    $('#chat-toggle').addEventListener('click', () => {
+        widget.classList.add('open');
+        $('#chat-input').focus();
+    });
+    $('#chat-close').addEventListener('click', () => widget.classList.remove('open'));
+
+    $('#chat-form').addEventListener('submit', (e) => {
+        e.preventDefault();
+        const v = $('#chat-input').value;
+        chatSend(v);
+    });
+
+    $$('.chat-suggestion').forEach(btn => {
+        btn.addEventListener('click', () => chatSend(btn.dataset.q));
+    });
+}
+
 // === Init ===
 function init() {
     // Selector de rango
@@ -879,6 +1012,7 @@ function init() {
     });
 
     setupTableSort();
+    setupChatbot();
     loadCountrySelector();
     loadAll();
 }

@@ -1287,6 +1287,22 @@ def api_google_sync():
         return jsonify({"status": "error", "error": str(e)}), 500
 
 
+@app.route("/api/chat", methods=["POST"])
+def api_chat():
+    """Chatbot del dashboard. Recibe historial de mensajes + pais opcional."""
+    import chatbot
+    data = request.get_json(force=True) or {}
+    messages = data.get("messages") or []
+    country = data.get("country") or None
+    if not messages:
+        return jsonify({"error": "Falta 'messages'"}), 400
+    try:
+        reply, tools_used = chatbot.chat(messages, country=country)
+        return jsonify({"reply": reply, "tools_used": tools_used})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/api/hubspot/sync", methods=["POST"])
 def api_hubspot_sync():
     """Lanza un sync incremental de los ultimos 30 dias para no tardar mucho desde el dashboard."""
