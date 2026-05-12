@@ -277,6 +277,63 @@
             </div>
         </section>
 
+        <!-- ================ Comparativa Shopping por pais ================ -->
+        <section class="section-divider">
+            <h2 class="section-title">Comparativa Shopping por pa&iacute;s <span class="section-badge section-badge-google">Google Shopping</span></h2>
+            <p class="section-desc">Evoluci&oacute;n de inversi&oacute;n, CPC y CTR de campa&ntilde;as Shopping en cada pa&iacute;s. Una l&iacute;nea por pa&iacute;s.</p>
+        </section>
+
+        <section class="shopping-card">
+            <div class="shopping-header">
+                <span id="shopping-info" class="weekly-info">-</span>
+                <div class="granularity-selector">
+                    <button class="sgran-btn" data-sgran="daily">D&iacute;a</button>
+                    <button class="sgran-btn active" data-sgran="weekly">Semana</button>
+                    <button class="sgran-btn" data-sgran="monthly">Mes</button>
+                </div>
+            </div>
+            <div class="shopping-grid">
+                <div class="chart-card chart-shopping">
+                    <div class="chart-header">
+                        <h2>&#128176; Inversi&oacute;n</h2>
+                        <span class="chart-subtitle">Coste por pa&iacute;s (EUR)</span>
+                    </div>
+                    <div class="chart-body"><canvas id="chart-shopping-cost"></canvas></div>
+                </div>
+                <div class="chart-card chart-shopping">
+                    <div class="chart-header">
+                        <h2>&#128181; CPC</h2>
+                        <span class="chart-subtitle">Coste por click (EUR)</span>
+                    </div>
+                    <div class="chart-body"><canvas id="chart-shopping-cpc"></canvas></div>
+                </div>
+                <div class="chart-card chart-shopping">
+                    <div class="chart-header">
+                        <h2>&#127919; CTR</h2>
+                        <span class="chart-subtitle">Click-through rate (%)</span>
+                    </div>
+                    <div class="chart-body"><canvas id="chart-shopping-ctr"></canvas></div>
+                </div>
+            </div>
+            <div class="shopping-totals">
+                <div class="table-wrapper">
+                    <table id="table-shopping-totals">
+                        <thead>
+                            <tr>
+                                <th>Pa&iacute;s</th>
+                                <th class="th-num">Coste</th>
+                                <th class="th-num">Clicks</th>
+                                <th class="th-num">Impr.</th>
+                                <th class="th-num">CTR</th>
+                                <th class="th-num">CPC</th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
+
         <!-- ================ HubSpot CRM ================ -->
         <section class="section-divider">
             <h2 class="section-title">HubSpot CRM <span class="section-badge">Visi&oacute;n 360</span></h2>

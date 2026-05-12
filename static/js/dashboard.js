@@ -4,6 +4,7 @@ const state = {
     days: 30,
     granularity: 'daily',     // del grafico de evolucion
     weeklyGranularity: 'weekly', // de la tabla semanal/mensual
+    shoppingGranularity: 'weekly', // de comparativa shopping por pais
     country: '',  // vacio = todos los paises
     customSince: null,        // YYYY-MM-DD si days === 'custom'
     customUntil: null,
@@ -11,6 +12,23 @@ const state = {
     sortBy: 'spend',
     sortDir: 'desc',
 };
+
+// Paleta de colores por pais para los graficos comparativos
+const COUNTRY_COLORS = {
+    "España":         "#dc2626", // rojo
+    "Francia":        "#2563eb", // azul
+    "Italia":         "#16a34a", // verde
+    "Alemania":       "#f59e0b", // ambar
+    "Reino Unido":    "#7c3aed", // morado
+    "Bélgica":        "#ea580c", // naranja
+    "Luxemburgo":     "#06b6d4", // cyan
+    "Países Bajos":   "#0ea5e9", // azul cielo
+    "Irlanda":        "#84cc16", // lima
+    "Portugal":       "#d97706", // ambar oscuro
+    "Estados Unidos": "#1e40af", // azul oscuro
+    "Multi-país":     "#64748b", // gris
+};
+function colorForCountry(c) { return COUNTRY_COLORS[c] || "#94a3b8"; }
 
 function buildQuery(extra = {}) {
     const params = new URLSearchParams();
@@ -93,6 +111,7 @@ const fetchHsByCountry = ()=> fetchJson(`/api/hubspot/by-country?${buildQuery()}
 const fetchCountries = ()  => fetchJson('/api/countries');
 const fetchWeekly = ()     => fetchJson(`/api/weekly?${buildQuery({granularity: state.weeklyGranularity})}`);
 const fetchAlerts = ()     => fetchJson(`/api/alerts${state.country ? '?country=' + encodeURIComponent(state.country) : ''}`);
+const fetchShoppingComparison = () => fetchJson(`/api/google/shopping-comparison?${buildQuery({granularity: state.shoppingGranularity})}`);
 
 // Google Ads APIs
 const fetchGoogleKpis = ()      => fetchJson(`/api/google/kpis?${buildQuery()}`);
@@ -544,15 +563,17 @@ function csvCell(v) {
 // === Carga principal ===
 async function loadAll() {
     try {
-        const [k, ts, cs, hsK, hsF, hsSrc, hsSt, hsCo, wk, gK, gCs, al] = await Promise.all([
+        const [k, ts, cs, hsK, hsF, hsSrc, hsSt, hsCo, wk, gK, gCs, al, sh] = await Promise.all([
             fetchKpis(), fetchTimeseries(), fetchCampaigns(),
             fetchHsKpis(), fetchHsFunnel(), fetchHsBySource(),
             fetchHsByStatus(), fetchHsByCountry(),
             fetchWeekly(),
             fetchGoogleKpis(), fetchGoogleCampaigns(),
             fetchAlerts(),
+            fetchShoppingComparison(),
         ]);
         renderAlerts(al);
+        renderShoppingComparison(sh);
         renderKpis(k);
         renderTimeseries(ts);
         state.campaigns = cs;
@@ -699,6 +720,105 @@ async function loadWeeklyOnly() {
     } catch (e) {
         toast('Error cargando tabla semanal: ' + e.message, 'error');
     }
+}
+
+async function loadShoppingOnly() {
+    try {
+        renderShoppingComparison(await fetchShoppingComparison());
+    } catch (e) {
+        toast('Error cargando comparativa Shopping: ' + e.message, 'error');
+    }
+}
+
+// === Comparativa Shopping por pais ===
+let chartShoppingCost = null;
+let chartShoppingCpc = null;
+let chartShoppingCtr = null;
+
+function buildShoppingChart(canvasId, payload, metric, yLabel, formatter) {
+    const periods = payload.periods || [];
+    const countries = payload.countries || [];
+    const series = (payload.series && payload.series[metric]) || {};
+    const labels = periods.map(p => p.label);
+    const datasets = countries.map(c => ({
+        label: c,
+        data: series[c] || [],
+        borderColor: colorForCountry(c),
+        backgroundColor: colorForCountry(c) + '22',
+        fill: false,
+        tension: 0.3,
+        borderWidth: 2,
+        pointRadius: 2,
+        pointHoverRadius: 5,
+    }));
+    const ctx = document.getElementById(canvasId).getContext('2d');
+    return new Chart(ctx, {
+        type: 'line',
+        data: { labels, datasets },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: { mode: 'index', intersect: false },
+            plugins: {
+                legend: {
+                    position: 'top',
+                    labels: { boxWidth: 10, font: { size: 11 }, padding: 8 },
+                },
+                tooltip: {
+                    callbacks: {
+                        label: (ctx) => `${ctx.dataset.label}: ${formatter(ctx.parsed.y)}`,
+                    },
+                },
+            },
+            scales: {
+                x: { grid: { display: false }, ticks: { maxRotation: 0, autoSkip: true, maxTicksLimit: 10, font: { size: 10 } } },
+                y: {
+                    title: { display: true, text: yLabel },
+                    grid: { color: 'rgba(15,23,42,0.05)' },
+                    ticks: { callback: (v) => formatter(v), font: { size: 10 } },
+                },
+            },
+        },
+    });
+}
+
+function renderShoppingComparison(payload) {
+    if (!payload || !payload.countries) return;
+
+    const info = $('#shopping-info');
+    if (info) {
+        const granLabel = payload.granularity === 'monthly' ? 'meses' : payload.granularity === 'weekly' ? 'semanas' : 'días';
+        info.textContent = `${payload.periods.length} ${granLabel} · ${payload.since} a ${payload.until} · ${payload.countries.length} países`;
+    }
+
+    if (chartShoppingCost) chartShoppingCost.destroy();
+    if (chartShoppingCpc) chartShoppingCpc.destroy();
+    if (chartShoppingCtr) chartShoppingCtr.destroy();
+
+    const fmtEurFn = (v) => fmtEur.format(v || 0) + ' €';
+    const fmtCpcFn = (v) => fmtEur3.format(v || 0) + ' €';
+    const fmtCtrFn = (v) => (v || 0).toLocaleString('es-ES', { maximumFractionDigits: 2 }) + '%';
+
+    chartShoppingCost = buildShoppingChart('chart-shopping-cost', payload, 'cost', 'EUR', fmtEurFn);
+    chartShoppingCpc = buildShoppingChart('chart-shopping-cpc', payload, 'cpc', 'EUR / click', fmtCpcFn);
+    chartShoppingCtr = buildShoppingChart('chart-shopping-ctr', payload, 'ctr', '%', fmtCtrFn);
+
+    // Tabla de totales (ordenada por gasto descendente)
+    const tbody = $('#table-shopping-totals tbody');
+    const sorted = [...payload.countries].sort((a, b) => (payload.totals[b].cost || 0) - (payload.totals[a].cost || 0));
+    tbody.innerHTML = sorted.map(c => {
+        const t = payload.totals[c];
+        return `
+            <tr>
+                <td>${flagImg(c)}<span style="color:${colorForCountry(c)};font-weight:600;">●</span> ${escapeHtml(c)}</td>
+                <td class="td-num">${fmtEur.format(t.cost)} €</td>
+                <td class="td-num">${fmtInt.format(t.clicks)}</td>
+                <td class="td-num">${fmtInt.format(t.impressions)}</td>
+                <td class="td-num">${(t.ctr || 0).toLocaleString('es-ES', { maximumFractionDigits: 2 })}%</td>
+                <td class="td-num">${fmtEur3.format(t.cpc)} €</td>
+            </tr>
+        `;
+    }).join('');
 }
 
 // === Weekly table render ===
@@ -1089,6 +1209,16 @@ function init() {
             btn.classList.add('active');
             state.weeklyGranularity = btn.dataset.wgran;
             loadWeeklyOnly();
+        });
+    });
+
+    // Selector de granularidad de la comparativa Shopping por pais
+    $$('.sgran-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            $$('.sgran-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            state.shoppingGranularity = btn.dataset.sgran;
+            loadShoppingOnly();
         });
     });
 

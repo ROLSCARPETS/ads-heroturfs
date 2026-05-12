@@ -1312,6 +1312,94 @@ def api_google_campaigns():
     return jsonify(out)
 
 
+@app.route("/api/google/shopping-comparison")
+def api_google_shopping_comparison():
+    """Series temporales de las campañas Shopping de Google agrupadas por pais.
+
+    Devuelve cost, clicks, impressions, ctr, cpc por (pais, periodo) para
+    construir 3 graficos comparativos (una linea por pais).
+    """
+    granularity = request.args.get("granularity", "weekly")
+    if granularity not in ("daily", "weekly", "monthly"):
+        granularity = "weekly"
+
+    since, until, _days = _range_from_request()
+    periods = _generate_periods(since, until, granularity)
+    period_keys = [p[0] for p in periods]
+    period_idx = {k: i for i, k in enumerate(period_keys)}
+    n = len(periods)
+    period_expr = _period_expr(granularity)
+
+    with _get_conn() as conn:
+        rows = conn.execute(
+            f"""
+            SELECT c.country country,
+                   {period_expr} period,
+                   SUM(i.cost) cost,
+                   SUM(i.clicks) clicks,
+                   SUM(i.impressions) impressions
+            FROM google_insights_daily i
+            JOIN google_campaigns c ON c.id = i.campaign_id
+            WHERE c.advertising_channel_type = 'SHOPPING'
+              AND i.date BETWEEN ? AND ?
+            GROUP BY c.country, period
+            ORDER BY c.country, period
+            """,
+            (since, until),
+        ).fetchall()
+
+    by_country = {}
+    for r in rows:
+        country = r["country"] or "(sin pais)"
+        if country not in by_country:
+            by_country[country] = {"cost": [0.0] * n, "clicks": [0] * n, "impressions": [0] * n}
+        i = period_idx.get(r["period"])
+        if i is None:
+            continue
+        by_country[country]["cost"][i] = r["cost"] or 0
+        by_country[country]["clicks"][i] = r["clicks"] or 0
+        by_country[country]["impressions"][i] = r["impressions"] or 0
+
+    # Ordenar paises por gasto total descendente
+    countries = sorted(by_country.keys(), key=lambda c: -sum(by_country[c]["cost"]))
+
+    series = {"cost": {}, "ctr": {}, "cpc": {}, "clicks": {}, "impressions": {}}
+    totals = {}
+    for c in countries:
+        d = by_country[c]
+        series["cost"][c] = [round(v, 2) for v in d["cost"]]
+        series["clicks"][c] = d["clicks"]
+        series["impressions"][c] = d["impressions"]
+        series["ctr"][c] = [
+            round((d["clicks"][i] / d["impressions"][i] * 100) if d["impressions"][i] else 0, 2)
+            for i in range(n)
+        ]
+        series["cpc"][c] = [
+            round((d["cost"][i] / d["clicks"][i]) if d["clicks"][i] else 0, 3)
+            for i in range(n)
+        ]
+        total_cost = sum(d["cost"])
+        total_clicks = sum(d["clicks"])
+        total_imp = sum(d["impressions"])
+        totals[c] = {
+            "cost": round(total_cost, 2),
+            "clicks": total_clicks,
+            "impressions": total_imp,
+            "ctr": round((total_clicks / total_imp * 100) if total_imp else 0, 2),
+            "cpc": round((total_cost / total_clicks) if total_clicks else 0, 3),
+        }
+
+    return jsonify({
+        "since": since,
+        "until": until,
+        "granularity": granularity,
+        "periods": [{"key": k, "label": l} for k, l in periods],
+        "countries": countries,
+        "series": series,
+        "totals": totals,
+    })
+
+
 @app.route("/api/google/sync", methods=["POST"])
 def api_google_sync():
     """Lanza sync de Google Ads. Devuelve error si falta Developer Token."""
