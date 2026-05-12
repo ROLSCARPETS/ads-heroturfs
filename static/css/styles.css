@@ -898,6 +898,14 @@ tbody td.td-num {
     font-variant-numeric: tabular-nums;
 }
 
+tbody td.td-country {
+    white-space: nowrap;
+    font-size: 12px;
+}
+tbody td.td-country .flag-img {
+    margin-right: 4px;
+}
+
 tbody tr:hover { background: var(--bg); }
 
 tfoot td {

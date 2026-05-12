@@ -439,6 +439,7 @@ function renderTable() {
     tbody.innerHTML = sorted.map(c => `
         <tr>
             <td class="td-name" title="${escapeHtml(c.name || '')}">${escapeHtml(c.name || '(sin nombre)')}</td>
+            <td class="td-country">${c.country ? flagImg(c.country) + escapeHtml(c.country) : '<span class="empty">-</span>'}</td>
             <td><span class="status-pill ${statusClass(c.status)}">${c.status || '-'}</span></td>
             <td class="td-num">${fmtEur.format(c.spend)}</td>
             <td class="td-num">${fmtInt.format(c.impressions)}</td>
@@ -462,6 +463,7 @@ function renderTable() {
         <tr>
             <td>Total (${state.campaigns.length} campañas)</td>
             <td></td>
+            <td></td>
             <td class="td-num">${fmtEur.format(tot.spend)}</td>
             <td class="td-num">${fmtInt.format(tot.impressions)}</td>
             <td class="td-num">${fmtInt.format(tot.clicks)}</td>
@@ -474,7 +476,7 @@ function renderTable() {
 
     // Marcar columna ordenada
     $$('#table-campaigns thead th').forEach(th => th.classList.remove('sort-asc', 'sort-desc'));
-    const idx = ['name', 'status', 'spend', 'impressions', 'clicks', 'ctr', 'cpc', 'leads', 'cpl'].indexOf(state.sortBy);
+    const idx = ['name', 'country', 'status', 'spend', 'impressions', 'clicks', 'ctr', 'cpc', 'leads', 'cpl'].indexOf(state.sortBy);
     if (idx >= 0) {
         const th = $$('#table-campaigns thead th')[idx];
         if (th) th.classList.add(state.sortDir === 'asc' ? 'sort-asc' : 'sort-desc');
@@ -493,7 +495,7 @@ function escapeHtml(s) {
 
 // === Sort tabla ===
 function setupTableSort() {
-    const cols = ['name', 'status', 'spend', 'impressions', 'clicks', 'ctr', 'cpc', 'leads', 'cpl'];
+    const cols = ['name', 'country', 'status', 'spend', 'impressions', 'clicks', 'ctr', 'cpc', 'leads', 'cpl'];
     $$('#table-campaigns thead th').forEach((th, i) => {
         th.addEventListener('click', () => {
             const col = cols[i];
@@ -638,7 +640,7 @@ function renderGoogleCampaigns(rows) {
     const tfoot = $('#table-google-campaigns tfoot');
 
     if (!rows.length) {
-        tbody.innerHTML = '<tr><td colspan="11" style="text-align:center;color:#64748b;padding:24px;">No hay campañas Google. Pulsa "Sincronizar Google" o lanza desde terminal: <code>python google_sync.py</code></td></tr>';
+        tbody.innerHTML = '<tr><td colspan="12" style="text-align:center;color:#64748b;padding:24px;">No hay campañas Google. Pulsa "Sincronizar Google" o lanza desde terminal: <code>python google_sync.py</code></td></tr>';
         tfoot.innerHTML = '';
         return;
     }
@@ -646,6 +648,7 @@ function renderGoogleCampaigns(rows) {
     tbody.innerHTML = rows.map(c => `
         <tr>
             <td class="td-name" title="${escapeHtml(c.name || '')}">${escapeHtml(c.name || '(sin nombre)')}</td>
+            <td class="td-country">${c.country ? flagImg(c.country) + escapeHtml(c.country) : '<span class="empty">-</span>'}</td>
             <td>${escapeHtml(c.channel_type || '-')}</td>
             <td><span class="status-pill ${statusClass(c.status)}">${c.status || '-'}</span></td>
             <td class="td-num">${fmtEur.format(c.cost)}</td>
@@ -670,7 +673,7 @@ function renderGoogleCampaigns(rows) {
     tfoot.innerHTML = `
         <tr>
             <td>Total (${rows.length} campañas)</td>
-            <td></td><td></td>
+            <td></td><td></td><td></td>
             <td class="td-num">${fmtEur.format(tot.cost)}</td>
             <td class="td-num">${fmtInt.format(tot.impr)}</td>
             <td class="td-num">${fmtInt.format(tot.clicks)}</td>
