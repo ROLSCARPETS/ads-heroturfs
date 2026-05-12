@@ -1348,8 +1348,8 @@ def api_google_shopping_comparison():
             (since, until),
         ).fetchall()
 
-        # Presupuesto diario total por pais (solo campañas Shopping ENABLED).
-        # El presupuesto del rango = daily_budget * dias_del_rango.
+        # Presupuesto diario actual total por pais (solo campañas Shopping ENABLED).
+        # Usado como referencia y para fallback si no hay historico.
         budget_rows = conn.execute(
             """
             SELECT country, SUM(daily_budget) daily_total
@@ -1361,6 +1361,29 @@ def api_google_shopping_comparison():
             """,
         ).fetchall()
         budget_daily_by_country = {r["country"]: (r["daily_total"] or 0) for r in budget_rows}
+
+        # Presupuesto REAL del periodo: suma diaria desde google_budget_history.
+        # Cubre los cambios de budget aplicados durante el rango.
+        # Filtramos por status=ENABLED actual: si la campaña está pausada hoy,
+        # asumimos que no estaba contribuyendo presupuesto efectivo (limitacion
+        # conocida: no tenemos histórico de status).
+        budget_period_rows = conn.execute(
+            """
+            SELECT c.country, SUM(bh.daily_budget) total_budget,
+                   COUNT(DISTINCT bh.date) days_covered
+            FROM google_budget_history bh
+            JOIN google_campaigns c ON c.id = bh.campaign_id
+            WHERE c.advertising_channel_type = 'SHOPPING'
+              AND c.status = 'ENABLED'
+              AND bh.date BETWEEN ? AND ?
+            GROUP BY c.country
+            """,
+            (since, until),
+        ).fetchall()
+        budget_period_by_country = {
+            r["country"]: {"total": r["total_budget"] or 0, "days": r["days_covered"] or 0}
+            for r in budget_period_rows
+        }
 
     by_country = {}
     for r in rows:
@@ -1399,7 +1422,19 @@ def api_google_shopping_comparison():
         total_clicks = sum(d["clicks"])
         total_imp = sum(d["impressions"])
         daily_budget = budget_daily_by_country.get(c, 0) or 0
-        budget_period = daily_budget * days_in_range
+        # Presupuesto del periodo: usa historico real si hay datos suficientes,
+        # sino fallback al daily_budget actual x dias del rango.
+        period_data = budget_period_by_country.get(c)
+        if period_data and period_data["days"] >= days_in_range * 0.5:
+            # Tenemos al menos 50% de cobertura historica: usamos suma real
+            budget_period = period_data["total"]
+            budget_source = "historical" if period_data["days"] >= days_in_range * 0.9 else "partial_historical"
+        elif daily_budget > 0:
+            budget_period = daily_budget * days_in_range
+            budget_source = "projected"
+        else:
+            budget_period = 0
+            budget_source = None
         utilization = (total_cost / budget_period * 100) if budget_period > 0 else None
         totals[c] = {
             "cost": round(total_cost, 2),
@@ -1409,6 +1444,7 @@ def api_google_shopping_comparison():
             "cpc": round((total_cost / total_clicks) if total_clicks else 0, 3),
             "daily_budget": round(daily_budget, 2),
             "budget_period": round(budget_period, 2) if budget_period > 0 else None,
+            "budget_source": budget_source,
             "utilization_pct": round(utilization, 1) if utilization is not None else None,
         }
 

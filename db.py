@@ -192,6 +192,20 @@ CREATE TABLE IF NOT EXISTS google_sync_log (
 
 CREATE INDEX IF NOT EXISTS idx_g_insights_date    ON google_insights_daily(date);
 CREATE INDEX IF NOT EXISTS idx_g_campaigns_country ON google_campaigns(country);
+
+-- Histórico diario del daily_budget por campaña.
+-- Origen: API change_event (ultimos 30 dias) + snapshots diarios del sync nocturno.
+-- 'source' indica de donde viene la entrada: 'change_event' (reconstruido del API),
+-- 'snapshot' (foto del valor actual el dia X), 'current' (fallback si no hay info).
+CREATE TABLE IF NOT EXISTS google_budget_history (
+    campaign_id     TEXT NOT NULL,
+    date            TEXT NOT NULL,
+    daily_budget    REAL,
+    source          TEXT,
+    updated_at      TEXT,
+    PRIMARY KEY (campaign_id, date)
+);
+CREATE INDEX IF NOT EXISTS idx_g_budget_hist_date ON google_budget_history(date);
 """
 
 
@@ -556,6 +570,20 @@ def upsert_google_insight(conn, row):
             _to_float(row.get("cpc")),
             _to_float(row.get("cpm")),
         ),
+    )
+
+
+def upsert_google_budget_history(conn, campaign_id, date_str, daily_budget, source):
+    conn.execute(
+        """
+        INSERT INTO google_budget_history (campaign_id, date, daily_budget, source, updated_at)
+        VALUES (?, ?, ?, ?, datetime('now'))
+        ON CONFLICT(campaign_id, date) DO UPDATE SET
+            daily_budget = excluded.daily_budget,
+            source = excluded.source,
+            updated_at = datetime('now')
+        """,
+        (campaign_id, date_str, _to_float(daily_budget), source),
     )
 
 

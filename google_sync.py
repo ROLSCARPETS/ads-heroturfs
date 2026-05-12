@@ -112,6 +112,116 @@ def fetch_campaigns(client):
     return out
 
 
+def fetch_budget_change_events(client):
+    """Trae eventos de cambio de CAMPAIGN_BUDGET de los ultimos 30 dias.
+
+    Google Ads solo retiene change_event durante 30 dias. Cada evento incluye
+    old_amount_micros y new_amount_micros, lo que nos permite reconstruir la
+    timeline historica del budget.
+    """
+    service = client.get_service("GoogleAdsService")
+    # Google Ads NO permite consultar mas de 30 dias en change_event.
+    # Usamos hace 29 dias para evitar errores de borde.
+    since_dt = (date.today() - timedelta(days=29)).strftime("%Y-%m-%d 00:00:00")
+    until_dt = (date.today() + timedelta(days=1)).strftime("%Y-%m-%d 00:00:00")
+    # En GAQL no se pueden seleccionar subcampos de old_resource/new_resource:
+    # hay que pedir el recurso entero y parsearlo desde Python.
+    # Google obliga a rango finito (since + until), no infinito.
+    query = f"""
+        SELECT
+            change_event.change_date_time,
+            change_event.resource_change_operation,
+            change_event.old_resource,
+            change_event.new_resource,
+            change_event.campaign,
+            campaign.id
+        FROM change_event
+        WHERE change_event.change_date_time >= '{since_dt}'
+          AND change_event.change_date_time <= '{until_dt}'
+          AND change_event.change_resource_type = 'CAMPAIGN_BUDGET'
+        ORDER BY change_event.change_date_time DESC
+        LIMIT 10000
+    """
+    out = []
+    try:
+        response = service.search(customer_id=CUSTOMER_ID, query=query)
+        for row in response:
+            cid = None
+            if row.campaign and row.campaign.id:
+                cid = str(row.campaign.id)
+            else:
+                cstr = str(getattr(row.change_event, "campaign", "") or "")
+                if "/campaigns/" in cstr:
+                    cid = cstr.split("/campaigns/")[-1]
+            old_micros = 0
+            new_micros = 0
+            try:
+                old_micros = row.change_event.old_resource.campaign_budget.amount_micros or 0
+            except Exception:
+                pass
+            try:
+                new_micros = row.change_event.new_resource.campaign_budget.amount_micros or 0
+            except Exception:
+                pass
+            out.append({
+                "campaign_id": cid,
+                "change_date": str(row.change_event.change_date_time)[:10],
+                "change_date_time": str(row.change_event.change_date_time),
+                "old_amount_micros": old_micros,
+                "new_amount_micros": new_micros,
+            })
+    except Exception as e:
+        print(f"      [WARN] No se pudieron leer change_events (puede ser permisos limitados): {e}")
+    return out
+
+
+def build_budget_timeline(current_budgets, events, days_back=90):
+    """Construye timeline (campaign_id, date, budget) para los ultimos `days_back` dias.
+
+    Algoritmo:
+    - rolling = budget actual de la campana
+    - Iteramos dias desde hoy hacia atras
+    - Eventos ordenados DESC por fecha
+    - Si hay evento entre target_day+1 y today, antes del evento el budget era ev.old
+      -> aplicamos: rolling = ev.old_amount_micros / 1e6
+    - Si el evento ya esta en target_day o antes, ese cambio ya estaba aplicado, paramos
+
+    Devuelve dict {(campaign_id, date_iso): daily_budget}.
+    """
+    today = date.today()
+    since_date = today - timedelta(days=days_back)
+
+    events_by_campaign = {}
+    for ev in events:
+        cid = ev.get("campaign_id")
+        if not cid:
+            continue
+        events_by_campaign.setdefault(cid, []).append(ev)
+    # Cada lista ordenada DESC por change_date_time (string ISO -> sort directo funciona)
+    for cid in events_by_campaign:
+        events_by_campaign[cid].sort(key=lambda e: e["change_date_time"], reverse=True)
+
+    timeline = {}
+    for cid, cur in current_budgets.items():
+        events_desc = events_by_campaign.get(cid, [])
+        # Para cada dia desde today hasta since_date, calcular budget
+        for offset in range(days_back + 1):
+            target_day = today - timedelta(days=offset)
+            if target_day < since_date:
+                break
+            rolling = cur or 0
+            for ev in events_desc:
+                ev_date_str = ev["change_date"]
+                # ev_date > target_day: el evento es posterior, antes el budget era old
+                if ev_date_str > target_day.isoformat():
+                    rolling = (ev.get("old_amount_micros") or 0) / 1_000_000
+                else:
+                    # ev ya esta en o antes de target_day: budget aplicado, stop
+                    break
+            timeline[(cid, target_day.isoformat())] = rolling
+    return timeline
+
+
 def fetch_insights(client, since, until):
     """Insights diarios por campana entre `since` y `until` (objetos date).
 
@@ -175,7 +285,7 @@ def sync(since=None, until=None):
     try:
         client = _build_client()
 
-        print("[1/2] Trayendo campanas...")
+        print("[1/3] Trayendo campanas...")
         campaigns = fetch_campaigns(client)
         print(f"      {len(campaigns)} campanas encontradas")
         with db.get_conn() as conn:
@@ -184,7 +294,24 @@ def sync(since=None, until=None):
                 db.upsert_google_campaign(conn, c, country=country)
                 campaigns_count += 1
 
-        print("[2/2] Trayendo insights diarios...")
+        # Histórico de budget: change_event + snapshot del día actual
+        print("[2/3] Trayendo histórico de budget (ultimos 30 dias)...")
+        events = fetch_budget_change_events(client)
+        print(f"      {len(events)} eventos de cambio de budget")
+        current_budgets = {c["id"]: (c.get("daily_budget") or 0) for c in campaigns}
+        timeline = build_budget_timeline(current_budgets, events, days_back=90)
+        # Marcamos fuente: si hay events_by_campaign para esa campana, los dias
+        # post-evento son "change_event"; en cualquier caso lo guardamos para tener historico.
+        with db.get_conn() as conn:
+            for (cid, day), budget in timeline.items():
+                source = "change_event" if events else "current"
+                # El dia de hoy lo marcamos como snapshot (siempre exacto)
+                if day == date.today().isoformat():
+                    source = "snapshot"
+                db.upsert_google_budget_history(conn, cid, day, budget, source)
+        print(f"      Timeline guardada: {len(timeline)} (campana, dia) entries")
+
+        print("[3/3] Trayendo insights diarios...")
         insights = fetch_insights(client, since, until)
         print(f"      {len(insights)} filas de insights")
         with db.get_conn() as conn:
@@ -194,7 +321,7 @@ def sync(since=None, until=None):
 
         with db.get_conn() as conn:
             db.log_google_sync_finish(conn, sync_id, campaigns_count, insights_count, "ok")
-        print(f"\n[OK] Sync Google Ads completo: {campaigns_count} campanas, {insights_count} insights")
+        print(f"\n[OK] Sync Google Ads completo: {campaigns_count} campanas, {insights_count} insights, {len(timeline)} entradas budget history")
 
     except Exception as e:
         msg = str(e)
