@@ -3,6 +3,9 @@
 google_oauth_client.json
 *.token.json
 
+# Logs del sync nocturno
+logs/
+
 # Base de datos local
 *.db
 *.db-journal
