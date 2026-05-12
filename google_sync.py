@@ -77,9 +77,9 @@ def _build_client():
 def fetch_campaigns(client):
     """Lista campanas (incluidas pausadas) excepto las eliminadas.
 
+    Trae tambien el presupuesto diario (campaign_budget.amount_micros).
     Nota: campaign.start_date y campaign.end_date se eliminaron de la API v24,
-    asi que las columnas correspondientes en BBDD quedan a NULL (no se usan
-    en el dashboard).
+    asi que las columnas correspondientes en BBDD quedan a NULL.
     """
     service = client.get_service("GoogleAdsService")
     query = """
@@ -87,7 +87,9 @@ def fetch_campaigns(client):
             campaign.id,
             campaign.name,
             campaign.status,
-            campaign.advertising_channel_type
+            campaign.advertising_channel_type,
+            campaign_budget.amount_micros,
+            campaign_budget.period
         FROM campaign
         WHERE campaign.status != 'REMOVED'
         ORDER BY campaign.id
@@ -95,6 +97,8 @@ def fetch_campaigns(client):
     response = service.search(customer_id=CUSTOMER_ID, query=query)
     out = []
     for row in response:
+        amount_micros = row.campaign_budget.amount_micros if row.campaign_budget else 0
+        budget_period = row.campaign_budget.period.name if row.campaign_budget else None
         out.append({
             "id": str(row.campaign.id),
             "name": row.campaign.name,
@@ -102,6 +106,8 @@ def fetch_campaigns(client):
             "advertising_channel_type": row.campaign.advertising_channel_type.name,
             "start_date": None,
             "end_date": None,
+            "daily_budget": (amount_micros or 0) / 1_000_000,
+            "budget_period": budget_period,
         })
     return out
 

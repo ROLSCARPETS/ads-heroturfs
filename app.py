@@ -1348,6 +1348,20 @@ def api_google_shopping_comparison():
             (since, until),
         ).fetchall()
 
+        # Presupuesto diario total por pais (solo campañas Shopping ENABLED).
+        # El presupuesto del rango = daily_budget * dias_del_rango.
+        budget_rows = conn.execute(
+            """
+            SELECT country, SUM(daily_budget) daily_total
+            FROM google_campaigns
+            WHERE advertising_channel_type = 'SHOPPING'
+              AND status = 'ENABLED'
+              AND daily_budget IS NOT NULL
+            GROUP BY country
+            """,
+        ).fetchall()
+        budget_daily_by_country = {r["country"]: (r["daily_total"] or 0) for r in budget_rows}
+
     by_country = {}
     for r in rows:
         country = r["country"] or "(sin pais)"
@@ -1362,6 +1376,9 @@ def api_google_shopping_comparison():
 
     # Ordenar paises por gasto total descendente
     countries = sorted(by_country.keys(), key=lambda c: -sum(by_country[c]["cost"]))
+
+    # Numero de dias del rango (para multiplicar daily_budget)
+    days_in_range = (date.fromisoformat(until) - date.fromisoformat(since)).days + 1
 
     series = {"cost": {}, "ctr": {}, "cpc": {}, "clicks": {}, "impressions": {}}
     totals = {}
@@ -1381,17 +1398,24 @@ def api_google_shopping_comparison():
         total_cost = sum(d["cost"])
         total_clicks = sum(d["clicks"])
         total_imp = sum(d["impressions"])
+        daily_budget = budget_daily_by_country.get(c, 0) or 0
+        budget_period = daily_budget * days_in_range
+        utilization = (total_cost / budget_period * 100) if budget_period > 0 else None
         totals[c] = {
             "cost": round(total_cost, 2),
             "clicks": total_clicks,
             "impressions": total_imp,
             "ctr": round((total_clicks / total_imp * 100) if total_imp else 0, 2),
             "cpc": round((total_cost / total_clicks) if total_clicks else 0, 3),
+            "daily_budget": round(daily_budget, 2),
+            "budget_period": round(budget_period, 2) if budget_period > 0 else None,
+            "utilization_pct": round(utilization, 1) if utilization is not None else None,
         }
 
     return jsonify({
         "since": since,
         "until": until,
+        "days_in_range": days_in_range,
         "granularity": granularity,
         "periods": [{"key": k, "label": l} for k, l in periods],
         "countries": countries,

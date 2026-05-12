@@ -889,6 +889,41 @@ h1, h2, h3 { font-weight: 600; letter-spacing: -0.01em; }
     padding: 16px 20px;
 }
 
+/* Barra de utilizacion de presupuesto */
+.util-cell {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    justify-content: flex-end;
+    min-width: 110px;
+}
+.util-bar {
+    flex: 1;
+    height: 6px;
+    background: var(--bg);
+    border-radius: 3px;
+    overflow: hidden;
+    border: 1px solid var(--border);
+    min-width: 50px;
+    max-width: 80px;
+}
+.util-fill {
+    height: 100%;
+    transition: width 0.3s;
+}
+.util-fill.util-full     { background: var(--success); }
+.util-fill.util-good     { background: #84cc16; }   /* lima */
+.util-fill.util-low      { background: var(--warning); }
+.util-fill.util-critical { background: var(--danger); }
+.util-pct {
+    font-size: 11px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    min-width: 42px;
+    text-align: right;
+    color: var(--text);
+}
+
 /* === Charts grid === */
 .charts-grid {
     display: grid;

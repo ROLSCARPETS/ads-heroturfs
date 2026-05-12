@@ -808,10 +808,33 @@ function renderShoppingComparison(payload) {
     const sorted = [...payload.countries].sort((a, b) => (payload.totals[b].cost || 0) - (payload.totals[a].cost || 0));
     tbody.innerHTML = sorted.map(c => {
         const t = payload.totals[c];
+        // Render utilizacion como barra visual con color segun nivel
+        const util = t.utilization_pct;
+        let utilCell;
+        if (util === null || util === undefined) {
+            utilCell = '<span class="empty" title="No hay campañas ENABLED con presupuesto">-</span>';
+        } else {
+            const cls = util >= 95 ? 'util-full'
+                      : util >= 70 ? 'util-good'
+                      : util >= 40 ? 'util-low'
+                      : 'util-critical';
+            const widthPct = Math.min(util, 100);
+            utilCell = `
+                <div class="util-cell">
+                    <div class="util-bar"><div class="util-fill ${cls}" style="width:${widthPct}%;"></div></div>
+                    <span class="util-pct">${util.toLocaleString('es-ES', {maximumFractionDigits: 1})}%</span>
+                </div>
+            `;
+        }
+        const budgetDay = t.daily_budget > 0 ? fmtEur.format(t.daily_budget) + ' €' : '<span class="empty">-</span>';
+        const budgetPer = t.budget_period ? fmtEur.format(t.budget_period) + ' €' : '<span class="empty">-</span>';
         return `
             <tr>
                 <td>${flagImg(c)}<span style="color:${colorForCountry(c)};font-weight:600;">●</span> ${escapeHtml(c)}</td>
                 <td class="td-num">${fmtEur.format(t.cost)} €</td>
+                <td class="td-num">${budgetDay}</td>
+                <td class="td-num">${budgetPer}</td>
+                <td class="td-num">${utilCell}</td>
                 <td class="td-num">${fmtInt.format(t.clicks)}</td>
                 <td class="td-num">${fmtInt.format(t.impressions)}</td>
                 <td class="td-num">${(t.ctr || 0).toLocaleString('es-ES', { maximumFractionDigits: 2 })}%</td>

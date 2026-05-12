@@ -160,6 +160,8 @@ CREATE TABLE IF NOT EXISTS google_campaigns (
     start_date                  TEXT,
     end_date                    TEXT,
     country                     TEXT,
+    daily_budget                REAL,        -- EUR/dia (campaign_budget.amount_micros / 1e6)
+    budget_period               TEXT,        -- DAILY, CUSTOM_PERIOD, ...
     updated_at                  TEXT
 );
 
@@ -219,6 +221,13 @@ def _migrate(conn):
     if "country" not in cols:
         conn.execute("ALTER TABLE campaigns ADD COLUMN country TEXT")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_campaigns_country ON campaigns(country)")
+
+    # Google campaigns: anadir daily_budget y budget_period si no existen
+    g_cols = {r["name"] for r in conn.execute("PRAGMA table_info(google_campaigns)").fetchall()}
+    if g_cols and "daily_budget" not in g_cols:
+        conn.execute("ALTER TABLE google_campaigns ADD COLUMN daily_budget REAL")
+    if g_cols and "budget_period" not in g_cols:
+        conn.execute("ALTER TABLE google_campaigns ADD COLUMN budget_period TEXT")
 
 
 def upsert_campaign(conn, c, country=None):
@@ -490,8 +499,9 @@ def upsert_google_campaign(conn, c, country=None):
     conn.execute(
         """
         INSERT INTO google_campaigns (id, name, status, advertising_channel_type,
-                                       start_date, end_date, country, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
+                                       start_date, end_date, country,
+                                       daily_budget, budget_period, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
         ON CONFLICT(id) DO UPDATE SET
             name = excluded.name,
             status = excluded.status,
@@ -499,6 +509,8 @@ def upsert_google_campaign(conn, c, country=None):
             start_date = excluded.start_date,
             end_date = excluded.end_date,
             country = excluded.country,
+            daily_budget = excluded.daily_budget,
+            budget_period = excluded.budget_period,
             updated_at = datetime('now')
         """,
         (
@@ -509,6 +521,8 @@ def upsert_google_campaign(conn, c, country=None):
             c.get("start_date"),
             c.get("end_date"),
             country,
+            _to_float(c.get("daily_budget")),
+            c.get("budget_period"),
         ),
     )
 
