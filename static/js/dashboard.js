@@ -1010,6 +1010,53 @@ function renderShoppingComparison(payload, skipChipsRebuild = false) {
             </tr>
         `;
     }).join('');
+
+    // Fila de totales (sumas de columnas absolutas, ratios recalculados desde sumas)
+    const tfoot = $('#table-shopping-totals tfoot');
+    const sums = sorted.reduce((acc, c) => {
+        const t = payload.totals[c] || {};
+        acc.cost += t.cost || 0;
+        acc.daily_budget += t.daily_budget || 0;
+        acc.budget_period += t.budget_period || 0;
+        acc.clicks += t.clicks || 0;
+        acc.impressions += t.impressions || 0;
+        return acc;
+    }, { cost: 0, daily_budget: 0, budget_period: 0, clicks: 0, impressions: 0 });
+    const totCtr = sums.impressions > 0 ? (sums.clicks / sums.impressions * 100) : 0;
+    const totCpc = sums.clicks > 0 ? (sums.cost / sums.clicks) : 0;
+    const totUtil = sums.budget_period > 0 ? (sums.cost / sums.budget_period * 100) : null;
+
+    let utilTot;
+    if (totUtil === null) {
+        utilTot = '<span class="empty">-</span>';
+    } else {
+        const cls = totUtil >= 95 ? 'util-full'
+                  : totUtil >= 70 ? 'util-good'
+                  : totUtil >= 40 ? 'util-low'
+                  : 'util-critical';
+        const widthPct = Math.min(totUtil, 100);
+        utilTot = `
+            <div class="util-cell">
+                <div class="util-bar"><div class="util-fill ${cls}" style="width:${widthPct}%;"></div></div>
+                <span class="util-pct">${totUtil.toLocaleString('es-ES', {maximumFractionDigits: 1})}%</span>
+            </div>
+        `;
+    }
+    const budgetDayTot = sums.daily_budget > 0 ? fmtEur.format(sums.daily_budget) + ' €' : '<span class="empty">-</span>';
+    const budgetPerTot = sums.budget_period > 0 ? fmtEur.format(sums.budget_period) + ' €' : '<span class="empty">-</span>';
+    tfoot.innerHTML = `
+        <tr>
+            <td>Total (${sorted.length} países)</td>
+            <td class="td-num">${fmtEur.format(sums.cost)} €</td>
+            <td class="td-num">${budgetDayTot}</td>
+            <td class="td-num">${budgetPerTot}</td>
+            <td class="td-num">${utilTot}</td>
+            <td class="td-num">${fmtInt.format(sums.clicks)}</td>
+            <td class="td-num">${fmtInt.format(sums.impressions)}</td>
+            <td class="td-num">${totCtr.toLocaleString('es-ES', { maximumFractionDigits: 2 })}%</td>
+            <td class="td-num">${sums.clicks > 0 ? fmtEur3.format(totCpc) + ' €' : '<span class="empty">-</span>'}</td>
+        </tr>
+    `;
 }
 
 // === Weekly table render ===
