@@ -125,6 +125,23 @@ def _delta_pct(current, previous):
     return round((current - previous) / previous * 100, 1)
 
 
+def _hubspot_previous_range(since_iso, until_iso):
+    """Como _previous_range pero para timestamps ISO de HubSpot (con T...Z).
+
+    Mantiene la misma duracion en dias y devuelve formato 'YYYY-MM-DDT00:00:00Z' /
+    'YYYY-MM-DDT23:59:59Z' para usar en filtros createdate/lastmodifieddate.
+    """
+    s = date.fromisoformat(since_iso[:10])
+    u = date.fromisoformat(until_iso[:10])
+    days = (u - s).days + 1
+    prev_until = s - timedelta(days=1)
+    prev_since = prev_until - timedelta(days=days - 1)
+    return (
+        f"{prev_since.isoformat()}T00:00:00Z",
+        f"{prev_until.isoformat()}T23:59:59Z",
+    )
+
+
 def _fetch_leads_by_campaign(conn, since, until):
     """Devuelve dict {campaign_id: total_leads} sumando los tipos de accion considerados leads."""
     placeholders = ",".join("?" for _ in LEAD_ACTION_TYPES)
@@ -385,86 +402,69 @@ def _hubspot_date_range(days_param):
     return since_d.isoformat() + "T00:00:00.000Z", until.isoformat() + "T23:59:59.999Z"
 
 
-@app.route("/api/hubspot/kpis")
-def api_hubspot_kpis():
-    """KPIs principales de HubSpot en el rango (createdate del contacto). Filtro pais opcional."""
-    days_param = request.args.get("days", "30")
-    country = request.args.get("country") or None
-    since, until = _hubspot_date_range(days_param)
-
-    # Cuando hay filtro de pais, anadimos la condicion al WHERE de cada query
+def _hubspot_kpis(conn, since, until, country):
+    """Calcula KPIs HubSpot principales para un rango (returns dict)."""
     pais_clause = " AND pais = ?" if country else ""
-    pais_clause_c = " AND c.pais = ?" if country else ""
     pais_params = [country] if country else []
 
-    with _get_conn() as conn:
-        contacts_total = conn.execute(
-            f"SELECT COUNT(*) c FROM hubspot_contacts WHERE createdate BETWEEN ? AND ?{pais_clause}",
-            [since, until, *pais_params],
-        ).fetchone()["c"]
+    contacts_total = conn.execute(
+        f"SELECT COUNT(*) c FROM hubspot_contacts WHERE createdate BETWEEN ? AND ?{pais_clause}",
+        [since, until, *pais_params],
+    ).fetchone()["c"]
 
-        contacts_meta = conn.execute(
-            f"SELECT COUNT(*) c FROM hubspot_contacts WHERE createdate BETWEEN ? AND ? "
-            f"AND fuentes_de_captacion_especificas = ?{pais_clause}",
-            [since, until, HUBSPOT_META_SOURCE, *pais_params],
-        ).fetchone()["c"]
-        contacts_google = conn.execute(
-            f"SELECT COUNT(*) c FROM hubspot_contacts WHERE createdate BETWEEN ? AND ? "
-            f"AND fuentes_de_captacion_especificas = ?{pais_clause}",
-            [since, until, HUBSPOT_GOOGLE_SOURCE, *pais_params],
-        ).fetchone()["c"]
+    contacts_meta = conn.execute(
+        f"SELECT COUNT(*) c FROM hubspot_contacts WHERE createdate BETWEEN ? AND ? "
+        f"AND fuentes_de_captacion_especificas = ?{pais_clause}",
+        [since, until, HUBSPOT_META_SOURCE, *pais_params],
+    ).fetchone()["c"]
+    contacts_google = conn.execute(
+        f"SELECT COUNT(*) c FROM hubspot_contacts WHERE createdate BETWEEN ? AND ? "
+        f"AND fuentes_de_captacion_especificas = ?{pais_clause}",
+        [since, until, HUBSPOT_GOOGLE_SOURCE, *pais_params],
+    ).fetchone()["c"]
 
-        # Deals ganados: filtramos solo si hay pais via JOIN al contacto principal
-        if country:
-            deals_won_row = conn.execute(
-                """
-                SELECT COUNT(DISTINCT d.id) c, COALESCE(SUM(d.amount),0) revenue
-                FROM hubspot_deals d
-                JOIN hubspot_deal_contacts dc ON dc.deal_id = d.id
-                JOIN hubspot_contacts c ON c.id = dc.contact_id
-                WHERE d.is_won = 1 AND d.createdate BETWEEN ? AND ? AND c.pais = ?
-                """,
-                (since, until, country),
-            ).fetchone()
-        else:
-            deals_won_row = conn.execute(
-                "SELECT COUNT(*) c, COALESCE(SUM(amount), 0) revenue FROM hubspot_deals "
-                "WHERE is_won = 1 AND createdate BETWEEN ? AND ?",
-                (since, until),
-            ).fetchone()
-
-        # Revenue por fuente (cruce deal -> contacto)
-        revenue_by_source = {}
-        rev_sql = """
-            SELECT COALESCE(c.fuentes_de_captacion_especificas, '(sin atribucion)') src,
-                   COALESCE(SUM(d.amount), 0) revenue,
-                   COUNT(DISTINCT d.id) deals
+    if country:
+        deals_won_row = conn.execute(
+            """
+            SELECT COUNT(DISTINCT d.id) c, COALESCE(SUM(d.amount),0) revenue
             FROM hubspot_deals d
-            LEFT JOIN hubspot_deal_contacts dc ON dc.deal_id = d.id
-            LEFT JOIN hubspot_contacts c ON c.id = dc.contact_id
-            WHERE d.is_won = 1 AND d.createdate BETWEEN ? AND ?
-        """
-        rev_params = [since, until]
-        if country:
-            rev_sql += " AND c.pais = ?"
-            rev_params.append(country)
-        rev_sql += " GROUP BY c.fuentes_de_captacion_especificas"
-        for r in conn.execute(rev_sql, rev_params):
-            revenue_by_source[r["src"]] = {"revenue": round(r["revenue"], 2), "deals": r["deals"]}
-
-        last_sync = conn.execute(
-            "SELECT finished_at FROM hubspot_sync_log WHERE status = 'ok' ORDER BY id DESC LIMIT 1"
+            JOIN hubspot_deal_contacts dc ON dc.deal_id = d.id
+            JOIN hubspot_contacts c ON c.id = dc.contact_id
+            WHERE d.is_won = 1 AND d.createdate BETWEEN ? AND ? AND c.pais = ?
+            """,
+            (since, until, country),
         ).fetchone()
+    else:
+        deals_won_row = conn.execute(
+            "SELECT COUNT(*) c, COALESCE(SUM(amount), 0) revenue FROM hubspot_deals "
+            "WHERE is_won = 1 AND createdate BETWEEN ? AND ?",
+            (since, until),
+        ).fetchone()
+
+    revenue_by_source = {}
+    rev_sql = """
+        SELECT COALESCE(c.fuentes_de_captacion_especificas, '(sin atribucion)') src,
+               COALESCE(SUM(d.amount), 0) revenue,
+               COUNT(DISTINCT d.id) deals
+        FROM hubspot_deals d
+        LEFT JOIN hubspot_deal_contacts dc ON dc.deal_id = d.id
+        LEFT JOIN hubspot_contacts c ON c.id = dc.contact_id
+        WHERE d.is_won = 1 AND d.createdate BETWEEN ? AND ?
+    """
+    rev_params = [since, until]
+    if country:
+        rev_sql += " AND c.pais = ?"
+        rev_params.append(country)
+    rev_sql += " GROUP BY c.fuentes_de_captacion_especificas"
+    for r in conn.execute(rev_sql, rev_params):
+        revenue_by_source[r["src"]] = {"revenue": round(r["revenue"], 2), "deals": r["deals"]}
 
     revenue_meta = revenue_by_source.get(HUBSPOT_META_SOURCE, {}).get("revenue", 0)
     deals_meta = revenue_by_source.get(HUBSPOT_META_SOURCE, {}).get("deals", 0)
     revenue_google = revenue_by_source.get(HUBSPOT_GOOGLE_SOURCE, {}).get("revenue", 0)
     deals_google = revenue_by_source.get(HUBSPOT_GOOGLE_SOURCE, {}).get("deals", 0)
 
-    return jsonify({
-        "since": since[:10],
-        "until": until[:10],
-        "country": country,
+    return {
         "contacts_total": contacts_total,
         "contacts_meta": contacts_meta,
         "contacts_google": contacts_google,
@@ -475,109 +475,163 @@ def api_hubspot_kpis():
         "revenue_google": revenue_google,
         "deals_google": deals_google,
         "revenue_by_source": revenue_by_source,
+    }
+
+
+@app.route("/api/hubspot/kpis")
+def api_hubspot_kpis():
+    """KPIs principales de HubSpot + comparativa con periodo anterior."""
+    days_param = request.args.get("days", "30")
+    country = request.args.get("country") or None
+    since, until = _hubspot_date_range(days_param)
+    prev_since, prev_until = _hubspot_previous_range(since, until)
+
+    with _get_conn() as conn:
+        cur = _hubspot_kpis(conn, since, until, country)
+        prev = _hubspot_kpis(conn, prev_since, prev_until, country)
+        last_sync = conn.execute(
+            "SELECT finished_at FROM hubspot_sync_log WHERE status = 'ok' ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+
+    # Solo calculamos delta para metricas escalares (no para revenue_by_source)
+    scalar_keys = ["contacts_total", "contacts_meta", "contacts_google",
+                   "deals_won", "revenue_won", "revenue_meta", "deals_meta",
+                   "revenue_google", "deals_google"]
+    deltas = {f"{k}_pct": _delta_pct(cur[k], prev[k]) for k in scalar_keys}
+    prev_scalars = {k: prev[k] for k in scalar_keys}
+
+    return jsonify({
+        "since": since[:10],
+        "until": until[:10],
+        "country": country,
+        **cur,
+        "previous": {
+            "since": prev_since[:10],
+            "until": prev_until[:10],
+            **prev_scalars,
+        },
+        "deltas": deltas,
         "last_sync": last_sync["finished_at"] if last_sync else None,
     })
 
 
+def _hubspot_funnel(conn, since_meta, until_meta, since_hs, until_hs, country):
+    """Calcula stages + ROAS/CPL_real/CAC del funnel Meta (returns dict)."""
+    # Meta spend
+    sql = (
+        "SELECT COALESCE(SUM(i.spend),0) spend FROM insights_daily i "
+        "JOIN campaigns c ON c.id = i.campaign_id WHERE i.date BETWEEN ? AND ?"
+    )
+    params = [since_meta, until_meta]
+    if country:
+        sql += " AND c.country = ?"
+        params.append(country)
+    meta_spend = round(conn.execute(sql, params).fetchone()["spend"], 2)
+
+    # Meta leads de la API
+    if country:
+        placeholders = ",".join("?" for _ in LEAD_ACTION_TYPES)
+        ml = conn.execute(
+            f"""
+            SELECT COALESCE(SUM(a.value),0) leads
+            FROM actions_daily a
+            JOIN campaigns c ON c.id = a.campaign_id
+            WHERE a.date BETWEEN ? AND ? AND a.action_type IN ({placeholders}) AND c.country = ?
+            """,
+            (since_meta, until_meta, *LEAD_ACTION_TYPES, country),
+        ).fetchone()
+        meta_leads = int(ml["leads"] or 0)
+    else:
+        meta_leads = sum(_fetch_leads_by_campaign(conn, since_meta, until_meta).values())
+
+    contacts_meta = _count_hubspot_leads(
+        conn, since_hs, until_hs, source=HUBSPOT_META_SOURCE, country=country
+    )
+
+    sql = """
+        SELECT COUNT(*) c FROM hubspot_contacts
+        WHERE createdate BETWEEN ? AND ?
+          AND fuentes_de_captacion_especificas = ?
+          AND hs_lead_status IN (
+            'Terminado | Compra Web',
+            'Terminado | Proyecto ganado',
+            'Terminado | Distribuidor convertido en cliente'
+          )
+    """
+    params = [since_hs, until_hs, HUBSPOT_META_SOURCE]
+    if country:
+        sql += " AND pais = ?"
+        params.append(country)
+    contacts_meta_won = conn.execute(sql, params).fetchone()["c"]
+
+    sql = """
+        SELECT COALESCE(SUM(d.amount), 0) revenue, COUNT(DISTINCT d.id) deals
+        FROM hubspot_deals d
+        JOIN hubspot_deal_contacts dc ON dc.deal_id = d.id
+        JOIN hubspot_contacts c ON c.id = dc.contact_id
+        WHERE d.is_won = 1
+          AND d.createdate BETWEEN ? AND ?
+          AND c.fuentes_de_captacion_especificas = ?
+    """
+    params = [since_hs, until_hs, HUBSPOT_META_SOURCE]
+    if country:
+        sql += " AND c.pais = ?"
+        params.append(country)
+    rev = conn.execute(sql, params).fetchone()
+    revenue_meta = round(rev["revenue"], 2)
+    deals_meta = rev["deals"]
+
+    return {
+        "meta_spend": meta_spend,
+        "meta_leads": meta_leads,
+        "contacts_meta": contacts_meta,
+        "contacts_meta_won": contacts_meta_won,
+        "deals_meta": deals_meta,
+        "revenue_meta": revenue_meta,
+        "roas": round((revenue_meta / meta_spend) if meta_spend else 0, 2),
+        "cpl_real": round((meta_spend / contacts_meta) if contacts_meta else 0, 2),
+        "cac": round((meta_spend / contacts_meta_won) if contacts_meta_won else 0, 2),
+    }
+
+
 @app.route("/api/hubspot/funnel")
 def api_hubspot_funnel():
-    """Funnel completo Meta: spend -> leads Meta API -> contactos HS -> ganados -> revenue.
-
-    Si se pasa country, filtra Meta side por campaigns.country y HubSpot side por contacts.pais.
-    """
+    """Funnel completo Meta + comparativa con periodo anterior."""
     days_param = request.args.get("days", "30")
     country = request.args.get("country") or None
     since_meta, until_meta, _days = _resolve_range(days_param)
     since_hs, until_hs = _hubspot_date_range(days_param)
+    prev_since_meta, prev_until_meta = _previous_range(since_meta, until_meta)
+    prev_since_hs, prev_until_hs = _hubspot_previous_range(since_hs, until_hs)
 
     with _get_conn() as conn:
-        # Meta spend (filtrado por country)
-        sql = (
-            "SELECT COALESCE(SUM(i.spend),0) spend FROM insights_daily i "
-            "JOIN campaigns c ON c.id = i.campaign_id WHERE i.date BETWEEN ? AND ?"
-        )
-        params = [since_meta, until_meta]
-        if country:
-            sql += " AND c.country = ?"
-            params.append(country)
-        r = conn.execute(sql, params).fetchone()
-        meta_spend = round(r["spend"], 2)
+        cur = _hubspot_funnel(conn, since_meta, until_meta, since_hs, until_hs, country)
+        prev = _hubspot_funnel(conn, prev_since_meta, prev_until_meta,
+                                prev_since_hs, prev_until_hs, country)
 
-        # Meta leads de la API (filtrado por country)
-        if country:
-            placeholders = ",".join("?" for _ in LEAD_ACTION_TYPES)
-            ml = conn.execute(
-                f"""
-                SELECT COALESCE(SUM(a.value),0) leads
-                FROM actions_daily a
-                JOIN campaigns c ON c.id = a.campaign_id
-                WHERE a.date BETWEEN ? AND ? AND a.action_type IN ({placeholders}) AND c.country = ?
-                """,
-                (since_meta, until_meta, *LEAD_ACTION_TYPES, country),
-            ).fetchone()
-            meta_leads = int(ml["leads"] or 0)
-        else:
-            meta_leads = sum(_fetch_leads_by_campaign(conn, since_meta, until_meta).values())
-
-        # HubSpot - contactos atribuidos a Meta (con country opcional)
-        contacts_meta = _count_hubspot_leads(
-            conn, since_hs, until_hs, source=HUBSPOT_META_SOURCE, country=country
-        )
-
-        # Contactos Meta ganados (lead_status terminal positivo)
-        sql = """
-            SELECT COUNT(*) c FROM hubspot_contacts
-            WHERE createdate BETWEEN ? AND ?
-              AND fuentes_de_captacion_especificas = ?
-              AND hs_lead_status IN (
-                'Terminado | Compra Web',
-                'Terminado | Proyecto ganado',
-                'Terminado | Distribuidor convertido en cliente'
-              )
-        """
-        params = [since_hs, until_hs, HUBSPOT_META_SOURCE]
-        if country:
-            sql += " AND pais = ?"
-            params.append(country)
-        contacts_meta_won = conn.execute(sql, params).fetchone()["c"]
-
-        # Revenue Meta (deals won asociados a contactos Meta)
-        sql = """
-            SELECT COALESCE(SUM(d.amount), 0) revenue, COUNT(DISTINCT d.id) deals
-            FROM hubspot_deals d
-            JOIN hubspot_deal_contacts dc ON dc.deal_id = d.id
-            JOIN hubspot_contacts c ON c.id = dc.contact_id
-            WHERE d.is_won = 1
-              AND d.createdate BETWEEN ? AND ?
-              AND c.fuentes_de_captacion_especificas = ?
-        """
-        params = [since_hs, until_hs, HUBSPOT_META_SOURCE]
-        if country:
-            sql += " AND c.pais = ?"
-            params.append(country)
-        rev = conn.execute(sql, params).fetchone()
-        revenue_meta = round(rev["revenue"], 2)
-        deals_meta = rev["deals"]
-
-    roas = (revenue_meta / meta_spend) if meta_spend else 0
-    cpl_real = (meta_spend / contacts_meta) if contacts_meta else 0
-    cac = (meta_spend / contacts_meta_won) if contacts_meta_won else 0
+    deltas = {f"{k}_pct": _delta_pct(cur[k], prev[k]) for k in cur}
 
     return jsonify({
         "since": since_meta,
         "until": until_meta,
         "country": country,
         "stages": [
-            {"label": "Spend Meta", "value": meta_spend, "unit": "EUR"},
-            {"label": "Leads Meta (API)", "value": meta_leads, "unit": ""},
-            {"label": "Contactos HS atribuidos a Meta", "value": contacts_meta, "unit": ""},
-            {"label": "Contactos Meta ganados", "value": contacts_meta_won, "unit": ""},
-            {"label": "Deals ganados Meta", "value": deals_meta, "unit": ""},
-            {"label": "Revenue Meta", "value": revenue_meta, "unit": "EUR"},
+            {"label": "Spend Meta", "value": cur["meta_spend"], "unit": "EUR"},
+            {"label": "Leads Meta (API)", "value": cur["meta_leads"], "unit": ""},
+            {"label": "Contactos HS atribuidos a Meta", "value": cur["contacts_meta"], "unit": ""},
+            {"label": "Contactos Meta ganados", "value": cur["contacts_meta_won"], "unit": ""},
+            {"label": "Deals ganados Meta", "value": cur["deals_meta"], "unit": ""},
+            {"label": "Revenue Meta", "value": cur["revenue_meta"], "unit": "EUR"},
         ],
-        "roas": round(roas, 2),
-        "cpl_real": round(cpl_real, 2),
-        "cac": round(cac, 2),
+        "roas": cur["roas"],
+        "cpl_real": cur["cpl_real"],
+        "cac": cur["cac"],
+        "previous": {
+            "since": prev_since_meta,
+            "until": prev_until_meta,
+            **prev,
+        },
+        "deltas": deltas,
     })
 
 

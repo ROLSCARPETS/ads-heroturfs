@@ -180,6 +180,15 @@ function renderHsKpis(k) {
     $('#last-sync-hs').textContent = k.last_sync
         ? `HubSpot: ${formatDateTimeES(k.last_sync)}`
         : 'HubSpot: nunca';
+
+    // Delta vs periodo anterior
+    const d = k.deltas || {};
+    const p = k.previous || {};
+    setDelta('hs-delta-contacts', d.contacts_total_pct, 'contacts', fmtForDelta(p.contacts_total || 0, 'int'));
+    setDelta('hs-delta-deals-won', d.deals_won_pct, 'deals_won', fmtForDelta(p.deals_won || 0, 'int'));
+    setDelta('hs-delta-revenue', d.revenue_won_pct, 'revenue', fmtForDelta(p.revenue_won || 0, 'eur'));
+    setDelta('hs-delta-revenue-meta', d.revenue_meta_pct, 'revenue', fmtForDelta(p.revenue_meta || 0, 'eur'));
+    setDelta('hs-delta-revenue-google', d.revenue_google_pct, 'revenue', fmtForDelta(p.revenue_google || 0, 'eur'));
 }
 
 function renderHsFunnel(f) {
@@ -187,6 +196,13 @@ function renderHsFunnel(f) {
     $('#hs-kpi-roas').textContent = f.roas > 0 ? `${f.roas.toLocaleString('es-ES', {minimumFractionDigits:2, maximumFractionDigits:2})}x` : '-';
     $('#hs-kpi-cpl').textContent = f.cpl_real > 0 ? fmtEur.format(f.cpl_real) : '-';
     $('#hs-kpi-cac').textContent = f.cac > 0 ? fmtEur.format(f.cac) : '-';
+
+    // Delta vs periodo anterior (ROAS, CPL real, CAC)
+    const d = f.deltas || {};
+    const p = f.previous || {};
+    setDelta('hs-delta-roas', d.roas_pct, 'roas', fmtForDelta(p.roas || 0, 'x'));
+    setDelta('hs-delta-cpl', d.cpl_real_pct, 'cpl', fmtForDelta(p.cpl_real || 0, 'eur'));
+    setDelta('hs-delta-cac', d.cac_pct, 'cac', fmtForDelta(p.cac || 0, 'eur'));
 
     // Renderizar stages del funnel
     const container = $('#funnel-stages');
