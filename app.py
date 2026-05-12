@@ -108,6 +108,23 @@ def _resolve_range(days_param):
     return since.isoformat(), until.isoformat(), days_label
 
 
+def _previous_range(since_iso, until_iso):
+    """Devuelve (prev_since, prev_until) ISO con la misma duracion, justo antes."""
+    s = date.fromisoformat(since_iso)
+    u = date.fromisoformat(until_iso)
+    days = (u - s).days + 1
+    prev_until = s - timedelta(days=1)
+    prev_since = prev_until - timedelta(days=days - 1)
+    return prev_since.isoformat(), prev_until.isoformat()
+
+
+def _delta_pct(current, previous):
+    """Devuelve (current - previous) / previous * 100, o None si no calculable."""
+    if previous is None or previous == 0:
+        return None
+    return round((current - previous) / previous * 100, 1)
+
+
 def _fetch_leads_by_campaign(conn, since, until):
     """Devuelve dict {campaign_id: total_leads} sumando los tipos de accion considerados leads."""
     placeholders = ",".join("?" for _ in LEAD_ACTION_TYPES)
@@ -157,64 +174,71 @@ def index():
     return render_template("dashboard.html")
 
 
+def _meta_kpis(conn, since, until, country):
+    """Calcula KPIs Meta + HubSpot Meta-attributed para un rango."""
+    sql = (
+        "SELECT SUM(i.spend) spend, SUM(i.impressions) impressions, "
+        "SUM(i.reach) reach, SUM(i.clicks) clicks "
+        "FROM insights_daily i JOIN campaigns c ON c.id = i.campaign_id "
+        "WHERE i.date BETWEEN ? AND ?"
+    )
+    params = [since, until]
+    if country:
+        sql += " AND c.country = ?"
+        params.append(country)
+    r = conn.execute(sql, params).fetchone()
+    spend = r["spend"] or 0
+    impressions = r["impressions"] or 0
+    reach = r["reach"] or 0
+    clicks = r["clicks"] or 0
+
+    since_iso = _date_to_hubspot_iso(since)
+    until_iso = _date_to_hubspot_iso(until, end=True)
+    leads = _count_hubspot_leads(conn, since_iso, until_iso,
+                                 source=HUBSPOT_META_SOURCE, country=country)
+    return {
+        "spend": round(spend, 2),
+        "impressions": impressions,
+        "reach": reach,
+        "clicks": clicks,
+        "ctr": round((clicks / impressions * 100) if impressions else 0, 2),
+        "cpc": round((spend / clicks) if clicks else 0, 3),
+        "cpm": round((spend / impressions * 1000) if impressions else 0, 2),
+        "leads": int(leads),
+        "cpl": round((spend / leads) if leads else 0, 2),
+    }
+
+
 @app.route("/api/kpis")
 def api_kpis():
     days_param = request.args.get("days", "30")
     country = request.args.get("country") or None
     since, until, days = _resolve_range(days_param)
+    prev_since, prev_until = _previous_range(since, until)
+
     with _get_conn() as conn:
-        # Spend/impr/clicks de Meta filtrados por pais (via JOIN con campaigns)
-        sql = (
-            "SELECT SUM(i.spend) spend, SUM(i.impressions) impressions, "
-            "SUM(i.reach) reach, SUM(i.clicks) clicks "
-            "FROM insights_daily i JOIN campaigns c ON c.id = i.campaign_id "
-            "WHERE i.date BETWEEN ? AND ?"
-        )
-        params = [since, until]
-        if country:
-            sql += " AND c.country = ?"
-            params.append(country)
-        r = conn.execute(sql, params).fetchone()
-
-        # Leads ahora vienen de HubSpot (contactos atribuidos a Meta = "Redes Sociales - IG/FB")
-        # con filtro de pais opcional.
-        since_iso = _date_to_hubspot_iso(since)
-        until_iso = _date_to_hubspot_iso(until, end=True)
-        leads_total = _count_hubspot_leads(conn, since_iso, until_iso,
-                                           source=HUBSPOT_META_SOURCE, country=country)
-
-        # Ultima sincronizacion OK
+        cur = _meta_kpis(conn, since, until, country)
+        prev = _meta_kpis(conn, prev_since, prev_until, country)
         last_sync = conn.execute(
             "SELECT finished_at FROM sync_log WHERE status = 'ok' ORDER BY id DESC LIMIT 1"
         ).fetchone()
 
-    spend = r["spend"] or 0
-    impressions = r["impressions"] or 0
-    reach = r["reach"] or 0
-    clicks = r["clicks"] or 0
-    ctr = (clicks / impressions * 100) if impressions else 0
-    cpc = (spend / clicks) if clicks else 0
-    cpm = (spend / impressions * 1000) if impressions else 0
-    cpl = (spend / leads_total) if leads_total else 0
+    deltas = {f"{k}_pct": _delta_pct(cur[k], prev[k]) for k in cur}
 
-    return jsonify(
-        {
-            "since": since,
-            "until": until,
-            "days": days,
-            "country": country,
-            "spend": round(spend, 2),
-            "impressions": impressions,
-            "reach": reach,
-            "clicks": clicks,
-            "ctr": round(ctr, 2),
-            "cpc": round(cpc, 3),
-            "cpm": round(cpm, 2),
-            "leads": int(leads_total),
-            "cpl": round(cpl, 2),
-            "last_sync": last_sync["finished_at"] if last_sync else None,
-        }
-    )
+    return jsonify({
+        "since": since,
+        "until": until,
+        "days": days,
+        "country": country,
+        **cur,
+        "previous": {
+            "since": prev_since,
+            "until": prev_until,
+            **prev,
+        },
+        "deltas": deltas,
+        "last_sync": last_sync["finished_at"] if last_sync else None,
+    })
 
 
 @app.route("/api/timeseries")
@@ -1087,57 +1111,63 @@ def api_weekly():
 # Google Ads endpoints
 # ====================================================================
 
-@app.route("/api/google/kpis")
-def api_google_kpis():
-    """KPIs de Google Ads agregados en el rango. Filtro country opcional."""
-    days_param = request.args.get("days", "30")
-    country = request.args.get("country") or None
-    since, until, days = _resolve_range(days_param)
-
-    with _get_conn() as conn:
-        sql = (
-            "SELECT SUM(i.cost) cost, SUM(i.impressions) impressions, "
-            "SUM(i.clicks) clicks, SUM(i.conversions) conversions, "
-            "SUM(i.conversion_value) revenue "
-            "FROM google_insights_daily i JOIN google_campaigns c ON c.id = i.campaign_id "
-            "WHERE i.date BETWEEN ? AND ?"
-        )
-        params = [since, until]
-        if country:
-            sql += " AND c.country = ?"
-            params.append(country)
-        r = conn.execute(sql, params).fetchone()
-
-        last_sync = conn.execute(
-            "SELECT finished_at FROM google_sync_log WHERE status='ok' ORDER BY id DESC LIMIT 1"
-        ).fetchone()
-
+def _google_kpis(conn, since, until, country):
+    sql = (
+        "SELECT SUM(i.cost) cost, SUM(i.impressions) impressions, "
+        "SUM(i.clicks) clicks, SUM(i.conversions) conversions, "
+        "SUM(i.conversion_value) revenue "
+        "FROM google_insights_daily i JOIN google_campaigns c ON c.id = i.campaign_id "
+        "WHERE i.date BETWEEN ? AND ?"
+    )
+    params = [since, until]
+    if country:
+        sql += " AND c.country = ?"
+        params.append(country)
+    r = conn.execute(sql, params).fetchone()
     cost = r["cost"] or 0
     impressions = r["impressions"] or 0
     clicks = r["clicks"] or 0
     conversions = r["conversions"] or 0
     revenue = r["revenue"] or 0
-    ctr = (clicks / impressions * 100) if impressions else 0
-    cpc = (cost / clicks) if clicks else 0
-    cpm = (cost / impressions * 1000) if impressions else 0
-    roas = (revenue / cost) if cost else 0
-    cpa = (cost / conversions) if conversions else 0
+    return {
+        "cost": round(cost, 2),
+        "impressions": impressions,
+        "clicks": clicks,
+        "conversions": round(conversions, 2),
+        "revenue": round(revenue, 2),
+        "ctr": round((clicks / impressions * 100) if impressions else 0, 2),
+        "cpc": round((cost / clicks) if clicks else 0, 3),
+        "cpm": round((cost / impressions * 1000) if impressions else 0, 2),
+        "roas": round((revenue / cost) if cost else 0, 2),
+        "cpa": round((cost / conversions) if conversions else 0, 2),
+    }
+
+
+@app.route("/api/google/kpis")
+def api_google_kpis():
+    """KPIs de Google Ads + comparativa periodo anterior."""
+    days_param = request.args.get("days", "30")
+    country = request.args.get("country") or None
+    since, until, days = _resolve_range(days_param)
+    prev_since, prev_until = _previous_range(since, until)
+
+    with _get_conn() as conn:
+        cur = _google_kpis(conn, since, until, country)
+        prev = _google_kpis(conn, prev_since, prev_until, country)
+        last_sync = conn.execute(
+            "SELECT finished_at FROM google_sync_log WHERE status='ok' ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+
+    deltas = {f"{k}_pct": _delta_pct(cur[k], prev[k]) for k in cur}
 
     return jsonify({
         "since": since,
         "until": until,
         "days": days,
         "country": country,
-        "cost": round(cost, 2),
-        "impressions": impressions,
-        "clicks": clicks,
-        "conversions": round(conversions, 2),
-        "revenue": round(revenue, 2),
-        "ctr": round(ctr, 2),
-        "cpc": round(cpc, 3),
-        "cpm": round(cpm, 2),
-        "roas": round(roas, 2),
-        "cpa": round(cpa, 2),
+        **cur,
+        "previous": {"since": prev_since, "until": prev_until, **prev},
+        "deltas": deltas,
         "last_sync": last_sync["finished_at"] if last_sync else None,
     })
 

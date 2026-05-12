@@ -444,6 +444,32 @@ h1, h2, h3 { font-weight: 600; letter-spacing: -0.01em; }
     letter-spacing: 0.05em;
 }
 
+.kpi-delta {
+    margin-top: 8px;
+    font-size: 11px;
+    font-weight: 600;
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    padding: 2px 8px;
+    border-radius: 10px;
+    background: var(--bg);
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+    min-height: 18px;
+}
+.kpi-delta:empty { display: none; }
+.kpi-delta.delta-up   { background: #dcfce7; color: var(--success); }
+.kpi-delta.delta-down { background: #fee2e2; color: var(--danger); }
+.kpi-delta.delta-flat { background: var(--bg); color: var(--text-muted); }
+.kpi-delta-arrow { font-size: 13px; line-height: 1; }
+.kpi-delta-prev {
+    color: var(--text-muted);
+    font-weight: 400;
+    margin-left: 4px;
+    font-size: 10px;
+}
+
 .kpi-spend .kpi-value { color: var(--accent); }
 .kpi-leads .kpi-value { color: var(--leads); }
 .kpi-cpl .kpi-value { color: var(--leads); }

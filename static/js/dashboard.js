@@ -89,6 +89,57 @@ const fetchAlerts = ()     => fetchJson(`/api/alerts${state.country ? '?country=
 const fetchGoogleKpis = ()      => fetchJson(`/api/google/kpis?${buildQuery()}`);
 const fetchGoogleCampaigns = () => fetchJson(`/api/google/campaigns?${buildQuery()}`);
 
+// === Delta indicator helper ===
+// "down-good": metricas donde bajada es buena (cpl, cpc, cpm, cpa, cac)
+// "up-good": el resto (clicks, leads, ctr, conversions, revenue, roas, ...)
+// "neutral": spend, cost, impressions, reach (subir/bajar no es bueno ni malo per se)
+const DELTA_DIRECTION = {
+    spend: 'neutral', cost: 'neutral', impressions: 'neutral', reach: 'neutral',
+    cpl: 'down-good', cpc: 'down-good', cpm: 'down-good', cpa: 'down-good', cac: 'down-good',
+    // resto se asume up-good
+};
+
+function setDelta(elId, pct, kpiKey, prevValue, prevFormat) {
+    const el = document.getElementById(elId);
+    if (!el) return;
+    if (pct === null || pct === undefined) {
+        el.innerHTML = '';
+        el.className = 'kpi-delta';
+        return;
+    }
+    const direction = DELTA_DIRECTION[kpiKey] || 'up-good';
+    const isUp = pct > 0;
+    const isFlat = Math.abs(pct) < 0.5;
+    let cls = 'delta-flat';
+    let arrow = '→';  // →
+    if (!isFlat) {
+        if (isUp) {
+            arrow = '↗';  // ↗
+            if (direction === 'up-good') cls = 'delta-up';
+            else if (direction === 'down-good') cls = 'delta-down';
+            else cls = 'delta-flat';
+        } else {
+            arrow = '↘';  // ↘
+            if (direction === 'down-good') cls = 'delta-up';
+            else if (direction === 'up-good') cls = 'delta-down';
+            else cls = 'delta-flat';
+        }
+    }
+    el.className = `kpi-delta ${cls}`;
+    const sign = pct > 0 ? '+' : '';
+    const pctStr = sign + pct.toLocaleString('es-ES', { maximumFractionDigits: 1 }) + '%';
+    const prevStr = prevValue !== undefined ? `<span class="kpi-delta-prev">vs ${prevValue}</span>` : '';
+    el.innerHTML = `<span class="kpi-delta-arrow">${arrow}</span> ${pctStr} ${prevStr}`;
+}
+
+function fmtForDelta(value, format) {
+    if (format === 'eur') return fmtEur.format(value) + ' €';
+    if (format === 'eur3') return fmtEur3.format(value) + ' €';
+    if (format === 'pct') return value.toLocaleString('es-ES', { maximumFractionDigits: 2 }) + '%';
+    if (format === 'x') return value.toLocaleString('es-ES', { maximumFractionDigits: 2 }) + 'x';
+    return fmtInt.format(Math.round(value));
+}
+
 // === Render KPIs ===
 function renderKpis(k) {
     $('#kpi-spend').textContent = fmtEur.format(k.spend);
@@ -99,6 +150,18 @@ function renderKpis(k) {
     $('#kpi-cpc').textContent = fmtEur3.format(k.cpc);
     $('#kpi-leads').textContent = fmtInt.format(k.leads);
     $('#kpi-cpl').textContent = k.leads > 0 ? fmtEur.format(k.cpl) : '-';
+
+    // Delta vs periodo anterior
+    const d = k.deltas || {};
+    const p = k.previous || {};
+    setDelta('delta-spend', d.spend_pct, 'spend', fmtForDelta(p.spend || 0, 'eur'));
+    setDelta('delta-impressions', d.impressions_pct, 'impressions', fmtForDelta(p.impressions || 0, 'int'));
+    setDelta('delta-reach', d.reach_pct, 'reach', fmtForDelta(p.reach || 0, 'int'));
+    setDelta('delta-clicks', d.clicks_pct, 'clicks', fmtForDelta(p.clicks || 0, 'int'));
+    setDelta('delta-ctr', d.ctr_pct, 'ctr', fmtForDelta(p.ctr || 0, 'pct'));
+    setDelta('delta-cpc', d.cpc_pct, 'cpc', fmtForDelta(p.cpc || 0, 'eur3'));
+    setDelta('delta-leads', d.leads_pct, 'leads', fmtForDelta(p.leads || 0, 'int'));
+    setDelta('delta-cpl', d.cpl_pct, 'cpl', fmtForDelta(p.cpl || 0, 'eur'));
 
     $('#date-range').textContent = `${formatDateES(k.since)} - ${formatDateES(k.until)} (${k.days} dias)`;
     $('#last-sync').textContent = k.last_sync
@@ -526,6 +589,18 @@ function renderGoogleKpis(k) {
     $('#g-kpi-conv').textContent = fmtInt.format(Math.round(k.conversions));
     $('#g-kpi-revenue').textContent = fmtEur.format(k.revenue);
     $('#g-kpi-roas').textContent = k.roas > 0 ? `${k.roas.toLocaleString('es-ES', {minimumFractionDigits:2, maximumFractionDigits:2})}x` : '-';
+
+    // Delta vs periodo anterior
+    const d = k.deltas || {};
+    const p = k.previous || {};
+    setDelta('g-delta-cost', d.cost_pct, 'cost', fmtForDelta(p.cost || 0, 'eur'));
+    setDelta('g-delta-impressions', d.impressions_pct, 'impressions', fmtForDelta(p.impressions || 0, 'int'));
+    setDelta('g-delta-clicks', d.clicks_pct, 'clicks', fmtForDelta(p.clicks || 0, 'int'));
+    setDelta('g-delta-ctr', d.ctr_pct, 'ctr', fmtForDelta(p.ctr || 0, 'pct'));
+    setDelta('g-delta-cpc', d.cpc_pct, 'cpc', fmtForDelta(p.cpc || 0, 'eur3'));
+    setDelta('g-delta-conv', d.conversions_pct, 'conversions', fmtForDelta(p.conversions || 0, 'int'));
+    setDelta('g-delta-revenue', d.revenue_pct, 'revenue', fmtForDelta(p.revenue || 0, 'eur'));
+    setDelta('g-delta-roas', d.roas_pct, 'roas', fmtForDelta(p.roas || 0, 'x'));
 
     $('#last-sync-google').textContent = k.last_sync
         ? `Google: ${formatDateTimeES(k.last_sync)}`
