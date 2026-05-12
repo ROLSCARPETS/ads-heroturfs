@@ -31,6 +31,15 @@ body {
 
 h1, h2, h3 { font-weight: 600; letter-spacing: -0.01em; }
 
+/* === Sticky header (envuelve topbar + meta-bar) === */
+.sticky-header {
+    position: sticky;
+    top: 0;
+    z-index: 80;
+    background: var(--surface);
+    box-shadow: 0 1px 0 var(--border);
+}
+
 /* === Topbar === */
 .topbar {
     background: var(--surface);
@@ -944,11 +953,11 @@ tfoot td.td-num {
 .toast.toast-success { background: var(--success); }
 .toast.toast-error { background: var(--danger); }
 
-/* === Chatbot widget (esquina inferior izquierda) === */
+/* === Chatbot widget (esquina inferior derecha) === */
 .chat-widget {
     position: fixed;
     bottom: 24px;
-    left: 24px;
+    right: 24px;
     z-index: 90;
     font-family: inherit;
 }
@@ -976,7 +985,7 @@ tfoot td.td-num {
 .chat-panel {
     position: absolute;
     bottom: 0;
-    left: 0;
+    right: 0;
     width: 420px;
     max-width: calc(100vw - 32px);
     height: 580px;
