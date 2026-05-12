@@ -75,16 +75,19 @@ def _build_client():
 
 
 def fetch_campaigns(client):
-    """Lista campanas (incluidas pausadas) excepto las eliminadas."""
+    """Lista campanas (incluidas pausadas) excepto las eliminadas.
+
+    Nota: campaign.start_date y campaign.end_date se eliminaron de la API v24,
+    asi que las columnas correspondientes en BBDD quedan a NULL (no se usan
+    en el dashboard).
+    """
     service = client.get_service("GoogleAdsService")
     query = """
         SELECT
             campaign.id,
             campaign.name,
             campaign.status,
-            campaign.advertising_channel_type,
-            campaign.start_date,
-            campaign.end_date
+            campaign.advertising_channel_type
         FROM campaign
         WHERE campaign.status != 'REMOVED'
         ORDER BY campaign.id
@@ -97,8 +100,8 @@ def fetch_campaigns(client):
             "name": row.campaign.name,
             "status": row.campaign.status.name,
             "advertising_channel_type": row.campaign.advertising_channel_type.name,
-            "start_date": row.campaign.start_date,
-            "end_date": row.campaign.end_date,
+            "start_date": None,
+            "end_date": None,
         })
     return out
 
