@@ -13,6 +13,8 @@ const state = {
     sortDir: 'desc',
     shoppingDisabledCountries: new Set(), // paises ocultos en los charts de Shopping
     shoppingPayload: null,    // cache del ultimo payload para re-render sin refetch
+    shoppingSortBy: 'cost',   // columna por la que se ordena la tabla shopping
+    shoppingSortDir: 'desc',  // asc | desc
 };
 
 // Paleta de colores por pais para los graficos comparativos
@@ -799,6 +801,23 @@ function buildShoppingChart(canvasId, payload, metric, yLabel, formatter, chartT
     });
 }
 
+function setupShoppingTableSort() {
+    const ths = document.querySelectorAll('#table-shopping-totals thead th[data-sort]');
+    ths.forEach(th => {
+        th.addEventListener('click', () => {
+            const col = th.dataset.sort;
+            if (state.shoppingSortBy === col) {
+                state.shoppingSortDir = state.shoppingSortDir === 'asc' ? 'desc' : 'asc';
+            } else {
+                state.shoppingSortBy = col;
+                // Por defecto: texto asc, numericos desc
+                state.shoppingSortDir = col === 'country' ? 'asc' : 'desc';
+            }
+            if (state.shoppingPayload) renderShoppingComparison(state.shoppingPayload, true);
+        });
+    });
+}
+
 function renderShoppingCountryChips(payload) {
     const cont = $('#shopping-country-chips');
     if (!cont) return;
@@ -867,9 +886,33 @@ function renderShoppingComparison(payload, skipChipsRebuild = false) {
     chartShoppingCpc = buildShoppingChart('chart-shopping-cpc', payload, 'cpc', 'EUR / click', fmtCpcFn, 'line');
     chartShoppingCtr = buildShoppingChart('chart-shopping-ctr', payload, 'ctr', '%', fmtCtrFn, 'line');
 
-    // Tabla de totales (ordenada por gasto descendente)
+    // Tabla de totales con ordenacion segun state.shoppingSortBy/SortDir
     const tbody = $('#table-shopping-totals tbody');
-    const sorted = [...payload.countries].sort((a, b) => (payload.totals[b].cost || 0) - (payload.totals[a].cost || 0));
+    const sortKey = state.shoppingSortBy;
+    const dir = state.shoppingSortDir === 'asc' ? 1 : -1;
+    const sorted = [...payload.countries].sort((a, b) => {
+        let va, vb;
+        if (sortKey === 'country') {
+            va = a; vb = b;
+        } else {
+            va = payload.totals[a] ? payload.totals[a][sortKey] : null;
+            vb = payload.totals[b] ? payload.totals[b][sortKey] : null;
+        }
+        // null/undefined siempre al final (independiente de direccion)
+        if (va == null && vb == null) return 0;
+        if (va == null) return 1;
+        if (vb == null) return -1;
+        if (typeof va === 'string') return dir * va.localeCompare(vb);
+        return dir * (va - vb);
+    });
+
+    // Marcar columna ordenada en el thead
+    document.querySelectorAll('#table-shopping-totals thead th[data-sort]').forEach(th => {
+        th.classList.remove('sort-asc', 'sort-desc');
+        if (th.dataset.sort === sortKey) {
+            th.classList.add(state.shoppingSortDir === 'asc' ? 'sort-asc' : 'sort-desc');
+        }
+    });
     tbody.innerHTML = sorted.map(c => {
         const t = payload.totals[c];
         // Render utilizacion como barra visual con color segun nivel
@@ -1336,6 +1379,7 @@ function init() {
     });
 
     setupTableSort();
+    setupShoppingTableSort();
     setupTabs();
     setupChatbot();
     loadCountrySelector();
