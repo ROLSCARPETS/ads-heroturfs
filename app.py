@@ -216,31 +216,58 @@ def index():
 
 
 def _meta_kpis(conn, since, until, country):
-    """Calcula KPIs Meta + HubSpot Meta-attributed para un rango."""
-    sql = (
+    """KPIs BLENDED (Meta + Google) + HubSpot todas las fuentes.
+    Pese al nombre 'meta', desde que el Resumen pasa a ser blended esta
+    funcion suma tambien Google. Reach se queda Meta-only (Google no expone
+    reach comparable); el resto se suma.
+    """
+    # Meta insights
+    sql_m = (
         "SELECT SUM(i.spend) spend, SUM(i.impressions) impressions, "
         "SUM(i.reach) reach, SUM(i.clicks) clicks "
         "FROM insights_daily i JOIN campaigns c ON c.id = i.campaign_id "
         "WHERE i.date BETWEEN ? AND ?"
     )
-    params = [since, until]
+    params_m = [since, until]
     if country:
-        sql += " AND c.country = ?"
-        params.append(country)
-    r = conn.execute(sql, params).fetchone()
-    spend = r["spend"] or 0
-    impressions = r["impressions"] or 0
-    reach = r["reach"] or 0
-    clicks = r["clicks"] or 0
+        sql_m += " AND c.country = ?"
+        params_m.append(country)
+    rm = conn.execute(sql_m, params_m).fetchone()
+    spend_meta = rm["spend"] or 0
+    impressions_meta = rm["impressions"] or 0
+    reach_meta = rm["reach"] or 0  # Solo Meta
+    clicks_meta = rm["clicks"] or 0
 
+    # Google insights
+    sql_g = (
+        "SELECT SUM(i.cost) cost, SUM(i.impressions) impressions, SUM(i.clicks) clicks "
+        "FROM google_insights_daily i JOIN google_campaigns c ON c.id = i.campaign_id "
+        "WHERE i.date BETWEEN ? AND ?"
+    )
+    params_g = [since, until]
+    if country:
+        sql_g += " AND c.country = ?"
+        params_g.append(country)
+    rg = conn.execute(sql_g, params_g).fetchone()
+    spend_google = rg["cost"] or 0
+    impressions_google = rg["impressions"] or 0
+    clicks_google = rg["clicks"] or 0
+
+    # Sumas blended
+    spend = spend_meta + spend_google
+    impressions = impressions_meta + impressions_google
+    clicks = clicks_meta + clicks_google
+
+    # Leads HubSpot - TODAS las fuentes (no solo Meta) para coincidir con el
+    # chart blended del top del Resumen.
     since_iso = _date_to_hubspot_iso(since)
     until_iso = _date_to_hubspot_iso(until, end=True)
     leads = _count_hubspot_leads(conn, since_iso, until_iso,
-                                 source=HUBSPOT_META_SOURCE, country=country)
+                                 source=None, country=country)
     return {
         "spend": round(spend, 2),
         "impressions": impressions,
-        "reach": reach,
+        "reach": reach_meta,  # Meta-only, etiquetado en HTML
         "clicks": clicks,
         "ctr": round((clicks / impressions * 100) if impressions else 0, 2),
         "cpc": round((spend / clicks) if clicks else 0, 3),
