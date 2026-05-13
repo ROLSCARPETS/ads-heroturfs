@@ -1634,23 +1634,32 @@ def api_meta_country_comparison():
         ).fetchall()
 
         # Presupuesto diario actual por pais.
-        # Sumamos UNICAMENTE los ad sets ACTIVE con daily_budget > 0 (los
-        # que se ven con Pres./dia en el drill-down). Esto garantiza que el
-        # total del pais sea exactamente la suma de las filas visibles.
-        # Limitacion conocida: campañas en modo CBO (budget a nivel campana,
-        # ad sets sin budget propio) o que usan lifetime_budget no
-        # contribuiran al total -> aparecen como 0. La cuenta del usuario
-        # usa principalmente ABO asi que esto es el comportamiento esperado.
+        # Calculamos un "effective daily budget" por ad set ACTIVE:
+        #   - Si el ad set tiene daily_budget propio (> 0): se usa ese (ABO).
+        #   - Si no, pero la campana tiene daily_budget (CBO): se reparte
+        #     el budget de la campana entre sus ad sets ACTIVE (split equal).
+        #   - Si no hay ni una cosa ni la otra: 0.
+        # Asi el total del pais = suma de filas del drill-down (cuyo budget
+        # se calcula con la misma logica en /api/meta/ad-sets).
         budget_rows = conn.execute(
             """
             SELECT c.country country,
-                   SUM(ads.daily_budget) / 100.0 daily_total
+                   SUM(
+                     CASE
+                       WHEN ads.daily_budget IS NOT NULL AND ads.daily_budget > 0 THEN ads.daily_budget
+                       WHEN c.daily_budget IS NOT NULL AND c.daily_budget > 0 THEN
+                         c.daily_budget * 1.0 / (
+                           SELECT COUNT(*) FROM meta_ad_sets a2
+                           WHERE a2.campaign_id = c.id
+                             AND a2.effective_status = 'ACTIVE'
+                         )
+                       ELSE 0
+                     END
+                   ) / 100.0 daily_total
             FROM meta_ad_sets ads
             JOIN campaigns c ON c.id = ads.campaign_id
             WHERE c.effective_status = 'ACTIVE'
               AND ads.effective_status = 'ACTIVE'
-              AND ads.daily_budget IS NOT NULL
-              AND ads.daily_budget > 0
             GROUP BY c.country
             """,
         ).fetchall()
@@ -1807,11 +1816,26 @@ def api_meta_ad_sets():
     since, until, _days = _range_from_request()
     country = request.args.get("country") or None
 
+    # Effective daily budget por ad set:
+    #   - Solo aplica si el ad set sigue ACTIVE (paused -> NULL, se mostrara "-").
+    #   - Si tiene daily_budget propio > 0 -> ese (ABO).
+    #   - Si no, pero la campana tiene daily_budget > 0 -> campana / N_active_adsets
+    #     (CBO: repartir el budget de la campana entre sus ad sets activos).
     sql = """
         SELECT ads.id ad_set_id,
                ads.name ad_set_name,
                ads.effective_status ad_set_status,
-               ads.daily_budget / 100.0 daily_budget_eur,
+               CASE
+                 WHEN ads.effective_status != 'ACTIVE' THEN NULL
+                 WHEN ads.daily_budget IS NOT NULL AND ads.daily_budget > 0 THEN ads.daily_budget / 100.0
+                 WHEN c.daily_budget IS NOT NULL AND c.daily_budget > 0 THEN
+                   c.daily_budget * 1.0 / (
+                     SELECT COUNT(*) FROM meta_ad_sets a2
+                     WHERE a2.campaign_id = c.id
+                       AND a2.effective_status = 'ACTIVE'
+                   ) / 100.0
+                 ELSE NULL
+               END daily_budget_eur,
                c.id campaign_id,
                c.name campaign_name,
                c.country country,
