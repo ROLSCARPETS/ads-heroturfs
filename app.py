@@ -1695,7 +1695,8 @@ def api_meta_country_comparison():
     days_in_range = (date.fromisoformat(until) - date.fromisoformat(since)).days + 1
 
     series = {"cost": {}, "ctr": {}, "cpc": {}, "clicks": {}, "impressions": {},
-              "daily_budget": {}, "budget_period": {}, "utilization": {}}
+              "daily_budget": {}, "budget_period": {}, "utilization": {},
+              "leads": {}, "cpl": {}}
     totals = {}
     for c in countries:
         d = by_country[c]
@@ -1787,6 +1788,88 @@ def api_meta_country_comparison():
             "budget_period_pct":   _delta_pct(cur_t["budget_period"], p_totals["budget_period"]),
             "utilization_pct_pct": _delta_pct(cur_t["utilization_pct"], p_totals["utilization_pct"]),
         }
+
+    # === Leads / CPL desde HubSpot (atribuidos a Meta) ===
+    # Fuente Meta en HubSpot: 'Redes Sociales - IG/FB'. Usamos LIKE %...% para
+    # cubrir tambien leads multi-fuente como 'Redes Sociales - IG/FB;Web - Google Ads'.
+    # Filtramos por createdate en ISO (helper _date_to_hubspot_iso) y por pais
+    # exacto. Cuenta = nº de contactos creados en el rango.
+    META_HS_SOURCE_LIKE = "%Redes Sociales - IG/FB%"
+    hs_since = _date_to_hubspot_iso(since)
+    hs_until = _date_to_hubspot_iso(until, end=True)
+    hs_prev_since = _date_to_hubspot_iso(prev_since)
+    hs_prev_until = _date_to_hubspot_iso(prev_until, end=True)
+    period_expr_hs = _hubspot_period_expr(granularity)
+
+    with _get_conn() as conn:
+        # Totales por pais (actual)
+        leads_total_rows = conn.execute(
+            """
+            SELECT pais country, COUNT(*) c
+            FROM hubspot_contacts
+            WHERE createdate BETWEEN ? AND ?
+              AND fuentes_de_captacion_especificas LIKE ?
+              AND pais IS NOT NULL
+            GROUP BY pais
+            """,
+            (hs_since, hs_until, META_HS_SOURCE_LIKE),
+        ).fetchall()
+        # Totales por pais (periodo anterior)
+        prev_leads_rows = conn.execute(
+            """
+            SELECT pais country, COUNT(*) c
+            FROM hubspot_contacts
+            WHERE createdate BETWEEN ? AND ?
+              AND fuentes_de_captacion_especificas LIKE ?
+              AND pais IS NOT NULL
+            GROUP BY pais
+            """,
+            (hs_prev_since, hs_prev_until, META_HS_SOURCE_LIKE),
+        ).fetchall()
+        # Series por (pais, periodo) para la tabla detalle
+        period_leads_rows = conn.execute(
+            f"""
+            SELECT pais country, {period_expr_hs} period, COUNT(*) c
+            FROM hubspot_contacts
+            WHERE createdate BETWEEN ? AND ?
+              AND fuentes_de_captacion_especificas LIKE ?
+              AND pais IS NOT NULL
+            GROUP BY pais, period
+            """,
+            (hs_since, hs_until, META_HS_SOURCE_LIKE),
+        ).fetchall()
+
+    leads_total_by_country = {r["country"]: r["c"] for r in leads_total_rows}
+    prev_leads_by_country = {r["country"]: r["c"] for r in prev_leads_rows}
+    leads_by_country_period = {}
+    for r in period_leads_rows:
+        leads_by_country_period.setdefault(r["country"], {})[r["period"]] = r["c"]
+
+    # Inyectar leads/cpl en totals y series
+    for c in countries:
+        leads = leads_total_by_country.get(c, 0)
+        cur_t = totals[c]
+        cpl = round(cur_t["cost"] / leads, 2) if leads > 0 else None
+        cur_t["leads"] = leads
+        cur_t["cpl"] = cpl
+        # Previous
+        p_leads = prev_leads_by_country.get(c, 0)
+        p_cost = cur_t["previous"]["cost"]
+        p_cpl = round(p_cost / p_leads, 2) if p_leads > 0 else None
+        cur_t["previous"]["leads"] = p_leads
+        cur_t["previous"]["cpl"] = p_cpl
+        cur_t["deltas"]["leads_pct"] = _delta_pct(leads, p_leads)
+        cur_t["deltas"]["cpl_pct"]   = _delta_pct(cpl, p_cpl)
+        # Series por periodo
+        pmap = leads_by_country_period.get(c, {})
+        leads_series = [pmap.get(k, 0) for k in period_keys]
+        cost_series = series["cost"][c]
+        cpl_series = [
+            round(cost_series[i] / leads_series[i], 2) if leads_series[i] > 0 else 0
+            for i in range(n)
+        ]
+        series["leads"][c] = leads_series
+        series["cpl"][c] = cpl_series
 
     return jsonify({
         "since": since,

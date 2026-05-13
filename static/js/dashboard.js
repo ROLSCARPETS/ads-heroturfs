@@ -943,17 +943,34 @@ function buildChannelChart(kind, canvasId, payload, metric, yLabel, formatter, c
     });
 }
 
-// Definicion de bloques de la tabla "tipo Excel" de Shopping
-const SHOPPING_DETAIL_METRICS = [
-    { key: 'cost',          title: 'Coste',           format: 'eur',  totalKey: 'cost' },
-    { key: 'daily_budget',  title: 'Presupuesto/día (medio)', format: 'eur', totalKey: 'daily_budget' },
-    { key: 'budget_period', title: 'Presupuesto del periodo', format: 'eur', totalKey: 'budget_period' },
-    { key: 'utilization',   title: 'Utilización',     format: 'pct',  totalKey: 'utilization_pct' },
-    { key: 'clicks',        title: 'Clicks',          format: 'int',  totalKey: 'clicks' },
-    { key: 'impressions',   title: 'Impresiones',     format: 'int',  totalKey: 'impressions' },
-    { key: 'ctr',           title: 'CTR',             format: 'pct',  totalKey: 'ctr' },
-    { key: 'cpc',           title: 'CPC',             format: 'eur',  totalKey: 'cpc' },
+// Definicion de bloques de la tabla "tipo Excel" para cada kind.
+// Shopping y Search comparten; Meta anade Leads/CPL (atribuidos via HubSpot).
+const CHANNEL_DETAIL_METRICS = {
+    shopping: [
+        { key: 'cost',          title: 'Coste',                       format: 'eur',  totalKey: 'cost' },
+        { key: 'daily_budget',  title: 'Presupuesto/día (medio)',     format: 'eur',  totalKey: 'daily_budget' },
+        { key: 'budget_period', title: 'Presupuesto del periodo',     format: 'eur',  totalKey: 'budget_period' },
+        { key: 'utilization',   title: 'Utilización',                 format: 'pct',  totalKey: 'utilization_pct' },
+        { key: 'clicks',        title: 'Clicks',                      format: 'int',  totalKey: 'clicks' },
+        { key: 'impressions',   title: 'Impresiones',                 format: 'int',  totalKey: 'impressions' },
+        { key: 'ctr',           title: 'CTR',                         format: 'pct',  totalKey: 'ctr' },
+        { key: 'cpc',           title: 'CPC',                         format: 'eur',  totalKey: 'cpc' },
+    ],
+};
+CHANNEL_DETAIL_METRICS.search = CHANNEL_DETAIL_METRICS.shopping;  // alias
+CHANNEL_DETAIL_METRICS.meta = [
+    ...CHANNEL_DETAIL_METRICS.shopping,
+    { key: 'leads', title: 'Leads (HubSpot)',  format: 'int',  totalKey: 'leads' },
+    { key: 'cpl',   title: 'CPL (HubSpot)',     format: 'eur',  totalKey: 'cpl' },
 ];
+
+// Numero total de columnas en la tabla de totales (drill-down usa este colspan).
+// Meta anade 2 columnas (Leads + CPL) respecto a Shopping/Search.
+const CHANNEL_TABLE_COLSPAN = {
+    shopping: 9,
+    search:   9,
+    meta:     11,
+};
 
 function renderChannelDetailTable(kind, payload) {
     const cfg = channelCfg(kind);
@@ -991,7 +1008,8 @@ function renderChannelDetailTable(kind, payload) {
     // Cuerpo
     const tbody = table.querySelector('tbody');
     let body = '';
-    SHOPPING_DETAIL_METRICS.forEach(m => {
+    const metrics = CHANNEL_DETAIL_METRICS[kind] || CHANNEL_DETAIL_METRICS.shopping;
+    metrics.forEach(m => {
         body += `<tr class="section-title"><td colspan="${colspan}">${escapeHtml(m.title)}</td></tr>`;
         visibleCountries.forEach(c => {
             const total = totals[c] ? totals[c][m.totalKey] : null;
@@ -1118,10 +1136,10 @@ function renderChannelCountryChips(kind, payload) {
 }
 
 // === Drill-down generico: por ad group (Search) o por ad set (Meta) ===
-// La tabla totales de Shopping/Search/Meta tiene 9 columnas (debe coincidir
-// con el thead). Cualquier cambio de columnas en el HTML requiere actualizar
-// este valor.
-const DRILL_TABLE_COLSPAN = 9;
+// Colspan kind-aware para las sub-filas del drill-down. Debe coincidir con
+// el numero de columnas del thead de cada tabla de totales:
+// CHANNEL_TABLE_COLSPAN[kind] (definido arriba).
+function drillColspan(kind) { return CHANNEL_TABLE_COLSPAN[kind] || 9; }
 
 // Config por kind: que fetcher usar, donde cachear, y como pintar cada sub-fila.
 const DRILL_CFG = {
@@ -1202,7 +1220,7 @@ async function toggleDrillDown(kind, tr) {
     if (chev) chev.classList.add('open');
     let items = cache[c];
     if (!items) {
-        insertDrillLoading(tr, cfg.loadingLabel);
+        insertDrillLoading(kind, tr, cfg.loadingLabel);
         try {
             const resp = await cfg.fetcher(c);
             items = resp[cfg.payloadKey] || [];
@@ -1219,11 +1237,11 @@ async function toggleDrillDown(kind, tr) {
     insertDrillSubRows(kind, tr, c, items);
 }
 
-function insertDrillLoading(tr, label) {
+function insertDrillLoading(kind, tr, label) {
     const loadingTr = document.createElement('tr');
     loadingTr.className = 'drill-subrow drill-subrow-loading';
     loadingTr.dataset.drillParent = tr.dataset.drillCountry;
-    loadingTr.innerHTML = `<td colspan="${DRILL_TABLE_COLSPAN}" style="text-align:center;color:#64748b;padding:14px;">${escapeHtml(label)}</td>`;
+    loadingTr.innerHTML = `<td colspan="${drillColspan(kind)}" style="text-align:center;color:#64748b;padding:14px;">${escapeHtml(label)}</td>`;
     tr.after(loadingTr);
 }
 
@@ -1243,7 +1261,7 @@ function insertDrillSubRows(kind, tr, country, items) {
         const emptyTr = document.createElement('tr');
         emptyTr.className = 'drill-subrow drill-subrow-empty';
         emptyTr.dataset.drillParent = country;
-        emptyTr.innerHTML = `<td colspan="${DRILL_TABLE_COLSPAN}" style="text-align:center;color:#64748b;padding:14px;">${escapeHtml(cfg.emptyLabel)}</td>`;
+        emptyTr.innerHTML = `<td colspan="${drillColspan(kind)}" style="text-align:center;color:#64748b;padding:14px;">${escapeHtml(cfg.emptyLabel)}</td>`;
         tr.after(emptyTr);
         return;
     }
@@ -1255,7 +1273,7 @@ function insertDrillSubRows(kind, tr, country, items) {
         `<span class="${i === 0 ? 'drill-subhead-label' : 'drill-subhead-num'}">${escapeHtml(h)}</span>`
     ).join('');
     headerTr.innerHTML = `
-        <td colspan="${DRILL_TABLE_COLSPAN}">
+        <td colspan="${drillColspan(kind)}">
             <div class="drill-subhead-grid">${headerCellsHtml}</div>
         </td>
     `;
@@ -1270,7 +1288,7 @@ function insertDrillSubRows(kind, tr, country, items) {
         const statusCls = cfg.getStatus(g) === cfg.activeStatus ? '' : 'drill-paused';
         const name = cfg.getName(g) || '(sin nombre)';
         subTr.innerHTML = `
-            <td colspan="${DRILL_TABLE_COLSPAN}">
+            <td colspan="${drillColspan(kind)}">
                 <div class="drill-subrow-grid ${statusCls}">
                     <div class="drill-subrow-label">
                         <span class="drill-ag-name" title="${escapeHtml(name)}">${escapeHtml(name)}</span>
@@ -1381,6 +1399,11 @@ function renderChannelComparison(kind, payload, skipChipsRebuild = false) {
         const chevron = drillable ? `<span class="drill-chevron ${expanded ? 'open' : ''}">&#9656;</span>` : '';
         const rowCls = drillable ? 'drill-row' : '';
         const rowAttrs = drillable ? ` data-drill-country="${escapeHtml(c)}"` : '';
+        // Celdas extra solo para Meta: Leads (HubSpot) + CPL.
+        const metaCells = kind === 'meta' ? `
+                <td class="td-num">${fmtInt.format(t.leads || 0)}${deltaTag(d.leads_pct, 'up-good')}</td>
+                <td class="td-num">${t.cpl != null ? fmtEur.format(t.cpl) + ' €' : '<span class="empty">-</span>'}${deltaTag(d.cpl_pct, 'down-good')}</td>
+        ` : '';
         return `
             <tr class="${rowCls}"${rowAttrs}>
                 <td>${chevron}${flagImg(c)}<span style="color:${colorForCountry(c)};font-weight:600;">●</span> ${escapeHtml(c)}</td>
@@ -1391,7 +1414,7 @@ function renderChannelComparison(kind, payload, skipChipsRebuild = false) {
                 <td class="td-num">${fmtInt.format(t.clicks)}${deltaTag(d.clicks_pct, 'up-good')}</td>
                 <td class="td-num">${fmtInt.format(t.impressions)}${deltaTag(d.impressions_pct, 'up-good')}</td>
                 <td class="td-num">${(t.ctr || 0).toLocaleString('es-ES', { maximumFractionDigits: 2 })}%${deltaTag(d.ctr_pct, 'up-good')}</td>
-                <td class="td-num">${fmtEur.format(t.cpc)} €${deltaTag(d.cpc_pct, 'down-good')}</td>
+                <td class="td-num">${fmtEur.format(t.cpc)} €${deltaTag(d.cpc_pct, 'down-good')}</td>${metaCells}
             </tr>
         `;
     }).join('');
@@ -1410,8 +1433,9 @@ function renderChannelComparison(kind, payload, skipChipsRebuild = false) {
         acc.budget_period += t.budget_period || 0;
         acc.clicks += t.clicks || 0;
         acc.impressions += t.impressions || 0;
+        acc.leads += t.leads || 0;
         return acc;
-    }, { cost: 0, daily_budget: 0, budget_period: 0, clicks: 0, impressions: 0 });
+    }, { cost: 0, daily_budget: 0, budget_period: 0, clicks: 0, impressions: 0, leads: 0 });
     const totCtr = sums.impressions > 0 ? (sums.clicks / sums.impressions * 100) : 0;
     const totCpc = sums.clicks > 0 ? (sums.cost / sums.clicks) : 0;
     const totUtil = sums.budget_period > 0 ? (sums.cost / sums.budget_period * 100) : null;
@@ -1424,13 +1448,17 @@ function renderChannelComparison(kind, payload, skipChipsRebuild = false) {
         acc.budget_period += p.budget_period || 0;
         acc.clicks += p.clicks || 0;
         acc.impressions += p.impressions || 0;
+        acc.leads += p.leads || 0;
         return acc;
-    }, { cost: 0, daily_budget: 0, budget_period: 0, clicks: 0, impressions: 0 });
+    }, { cost: 0, daily_budget: 0, budget_period: 0, clicks: 0, impressions: 0, leads: 0 });
     const prevCtr = prevSums.impressions > 0 ? (prevSums.clicks / prevSums.impressions * 100) : 0;
     const prevCpc = prevSums.clicks > 0 ? (prevSums.cost / prevSums.clicks) : 0;
     const prevUtil = prevSums.budget_period > 0 ? (prevSums.cost / prevSums.budget_period * 100) : null;
 
     const _dpct = (cur, prev) => (prev === null || prev === undefined || prev === 0) ? null : Math.round((cur - prev) / prev * 1000) / 10;
+    // CPL = cost / leads (re-calculado desde sumas).
+    const totCpl = sums.leads > 0 ? (sums.cost / sums.leads) : null;
+    const prevCpl = prevSums.leads > 0 ? (prevSums.cost / prevSums.leads) : null;
     const dT = {
         cost: _dpct(sums.cost, prevSums.cost),
         daily_budget: _dpct(sums.daily_budget, prevSums.daily_budget),
@@ -1440,6 +1468,8 @@ function renderChannelComparison(kind, payload, skipChipsRebuild = false) {
         ctr: _dpct(totCtr, prevCtr),
         cpc: _dpct(totCpc, prevCpc),
         util: prevUtil !== null && totUtil !== null ? _dpct(totUtil, prevUtil) : null,
+        leads: _dpct(sums.leads, prevSums.leads),
+        cpl: (totCpl !== null && prevCpl !== null) ? _dpct(totCpl, prevCpl) : null,
     };
 
     let utilTot;
@@ -1460,6 +1490,11 @@ function renderChannelComparison(kind, payload, skipChipsRebuild = false) {
     }
     const budgetDayTot = sums.daily_budget > 0 ? fmtEur.format(sums.daily_budget) + ' €' : '<span class="empty">-</span>';
     const budgetPerTot = sums.budget_period > 0 ? fmtEur.format(sums.budget_period) + ' €' : '<span class="empty">-</span>';
+    // Celdas extra para tfoot Meta
+    const metaCellsTot = kind === 'meta' ? `
+            <td class="td-num">${fmtInt.format(sums.leads)}${deltaTag(dT.leads, 'up-good')}</td>
+            <td class="td-num">${totCpl != null ? fmtEur.format(totCpl) + ' €' : '<span class="empty">-</span>'}${deltaTag(dT.cpl, 'down-good')}</td>
+    ` : '';
     tfoot.innerHTML = `
         <tr>
             <td>Total (${sorted.length} países)</td>
@@ -1470,7 +1505,7 @@ function renderChannelComparison(kind, payload, skipChipsRebuild = false) {
             <td class="td-num">${fmtInt.format(sums.clicks)}${deltaTag(dT.clicks, 'up-good')}</td>
             <td class="td-num">${fmtInt.format(sums.impressions)}${deltaTag(dT.impressions, 'up-good')}</td>
             <td class="td-num">${totCtr.toLocaleString('es-ES', { maximumFractionDigits: 2 })}%${deltaTag(dT.ctr, 'up-good')}</td>
-            <td class="td-num">${sums.clicks > 0 ? fmtEur.format(totCpc) + ' €' : '<span class="empty">-</span>'}${deltaTag(dT.cpc, 'down-good')}</td>
+            <td class="td-num">${sums.clicks > 0 ? fmtEur.format(totCpc) + ' €' : '<span class="empty">-</span>'}${deltaTag(dT.cpc, 'down-good')}</td>${metaCellsTot}
         </tr>
     `;
 }
