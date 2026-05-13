@@ -1591,6 +1591,186 @@ def _google_channel_comparison(channel_type: str):
     })
 
 
+@app.route("/api/meta/country-comparison")
+def api_meta_country_comparison():
+    """Series temporales de campañas Meta agrupadas por pais.
+
+    Mismo shape de respuesta que /api/google/{shopping,search}-comparison para
+    que el frontend pueda reutilizar la logica de render.
+
+    Diferencias respecto a Google:
+    - Tabla insights_daily (Meta) tiene spend (no cost) y no hay channel_type.
+    - daily_budget en Meta esta en centavos (Meta API standard) -> dividimos
+      entre 100 para mostrar EUR.
+    - No tenemos historico diario de budget para Meta: budget_period es una
+      proyeccion (daily_budget actual x dias del rango), nunca historico.
+    """
+    granularity = request.args.get("granularity", "weekly")
+    if granularity not in ("daily", "weekly", "monthly"):
+        granularity = "weekly"
+
+    since, until, _days = _range_from_request()
+    periods = _generate_periods(since, until, granularity)
+    period_keys = [p[0] for p in periods]
+    period_idx = {k: i for i, k in enumerate(period_keys)}
+    n = len(periods)
+    period_expr = _period_expr(granularity)
+
+    with _get_conn() as conn:
+        rows = conn.execute(
+            f"""
+            SELECT c.country country,
+                   {period_expr} period,
+                   SUM(i.spend) cost,
+                   SUM(i.clicks) clicks,
+                   SUM(i.impressions) impressions
+            FROM insights_daily i
+            JOIN campaigns c ON c.id = i.campaign_id
+            WHERE i.date BETWEEN ? AND ?
+            GROUP BY c.country, period
+            ORDER BY c.country, period
+            """,
+            (since, until),
+        ).fetchall()
+
+        # Presupuesto diario actual por pais (campañas Meta ACTIVE)
+        budget_rows = conn.execute(
+            """
+            SELECT country, SUM(daily_budget) / 100.0 daily_total
+            FROM campaigns
+            WHERE effective_status = 'ACTIVE'
+              AND daily_budget IS NOT NULL
+            GROUP BY country
+            """,
+        ).fetchall()
+        budget_daily_by_country = {r["country"]: (r["daily_total"] or 0) for r in budget_rows}
+
+    by_country = {}
+    for r in rows:
+        country = r["country"] or "(sin pais)"
+        if country not in by_country:
+            by_country[country] = {
+                "cost": [0.0] * n, "clicks": [0] * n, "impressions": [0] * n,
+                "daily_budget": [0.0] * n, "budget_period": [0.0] * n,
+            }
+        i = period_idx.get(r["period"])
+        if i is None:
+            continue
+        by_country[country]["cost"][i] = r["cost"] or 0
+        by_country[country]["clicks"][i] = r["clicks"] or 0
+        by_country[country]["impressions"][i] = r["impressions"] or 0
+
+    countries = sorted(by_country.keys(), key=lambda c: -sum(by_country[c]["cost"]))
+    days_in_range = (date.fromisoformat(until) - date.fromisoformat(since)).days + 1
+
+    series = {"cost": {}, "ctr": {}, "cpc": {}, "clicks": {}, "impressions": {},
+              "daily_budget": {}, "budget_period": {}, "utilization": {}}
+    totals = {}
+    for c in countries:
+        d = by_country[c]
+        series["cost"][c] = [round(v, 2) for v in d["cost"]]
+        series["clicks"][c] = d["clicks"]
+        series["impressions"][c] = d["impressions"]
+        series["ctr"][c] = [
+            round((d["clicks"][i] / d["impressions"][i] * 100) if d["impressions"][i] else 0, 2)
+            for i in range(n)
+        ]
+        series["cpc"][c] = [
+            round((d["cost"][i] / d["clicks"][i]) if d["clicks"][i] else 0, 3)
+            for i in range(n)
+        ]
+        # daily_budget por periodo: usamos el actual como constante (no hay historico)
+        daily_budget = budget_daily_by_country.get(c, 0) or 0
+        series["daily_budget"][c] = [round(daily_budget, 2)] * n
+        series["budget_period"][c] = [round(daily_budget, 2)] * n  # 1 dia por bucket si daily
+        series["utilization"][c] = [
+            round((d["cost"][i] / daily_budget * 100) if daily_budget > 0 else 0, 1)
+            for i in range(n)
+        ]
+        total_cost = sum(d["cost"])
+        total_clicks = sum(d["clicks"])
+        total_imp = sum(d["impressions"])
+        # Presupuesto proyectado del periodo: daily x dias_rango.
+        budget_period = daily_budget * days_in_range if daily_budget > 0 else 0
+        utilization = (total_cost / budget_period * 100) if budget_period > 0 else None
+        totals[c] = {
+            "cost": round(total_cost, 2),
+            "clicks": total_clicks,
+            "impressions": total_imp,
+            "ctr": round((total_clicks / total_imp * 100) if total_imp else 0, 2),
+            "cpc": round((total_cost / total_clicks) if total_clicks else 0, 3),
+            "daily_budget": round(daily_budget, 2),
+            "budget_period": round(budget_period, 2) if budget_period > 0 else None,
+            "budget_source": "projected" if budget_period > 0 else None,
+            "utilization_pct": round(utilization, 1) if utilization is not None else None,
+        }
+
+    # Comparativa con periodo anterior
+    prev_since, prev_until = _previous_range(since, until)
+    prev_days = (date.fromisoformat(prev_until) - date.fromisoformat(prev_since)).days + 1
+    with _get_conn() as conn:
+        prev_cost_rows = conn.execute(
+            """
+            SELECT c.country country,
+                   SUM(i.spend) cost,
+                   SUM(i.clicks) clicks,
+                   SUM(i.impressions) impressions
+            FROM insights_daily i
+            JOIN campaigns c ON c.id = i.campaign_id
+            WHERE i.date BETWEEN ? AND ?
+            GROUP BY c.country
+            """,
+            (prev_since, prev_until),
+        ).fetchall()
+    prev_by_country = {r["country"]: dict(r) for r in prev_cost_rows}
+
+    for c in countries:
+        pc = prev_by_country.get(c, {})
+        p_cost = pc.get("cost") or 0
+        p_clicks = pc.get("clicks") or 0
+        p_imp = pc.get("impressions") or 0
+        p_daily = budget_daily_by_country.get(c, 0) or 0  # asumimos mismo budget actual
+        p_budget_period = p_daily * prev_days if p_daily > 0 else 0
+        p_ctr = (p_clicks / p_imp * 100) if p_imp else 0
+        p_cpc = (p_cost / p_clicks) if p_clicks else 0
+        p_util = (p_cost / p_budget_period * 100) if p_budget_period > 0 else None
+        p_totals = {
+            "cost": round(p_cost, 2),
+            "clicks": p_clicks,
+            "impressions": p_imp,
+            "ctr": round(p_ctr, 2),
+            "cpc": round(p_cpc, 3),
+            "daily_budget": round(p_daily, 2),
+            "budget_period": round(p_budget_period, 2) if p_budget_period > 0 else None,
+            "utilization_pct": round(p_util, 1) if p_util is not None else None,
+        }
+        cur_t = totals[c]
+        cur_t["previous"] = p_totals
+        cur_t["deltas"] = {
+            "cost_pct":            _delta_pct(cur_t["cost"], p_totals["cost"]),
+            "clicks_pct":          _delta_pct(cur_t["clicks"], p_totals["clicks"]),
+            "impressions_pct":     _delta_pct(cur_t["impressions"], p_totals["impressions"]),
+            "ctr_pct":             _delta_pct(cur_t["ctr"], p_totals["ctr"]),
+            "cpc_pct":             _delta_pct(cur_t["cpc"], p_totals["cpc"]),
+            "daily_budget_pct":    _delta_pct(cur_t["daily_budget"], p_totals["daily_budget"]),
+            "budget_period_pct":   _delta_pct(cur_t["budget_period"], p_totals["budget_period"]),
+            "utilization_pct_pct": _delta_pct(cur_t["utilization_pct"], p_totals["utilization_pct"]),
+        }
+
+    return jsonify({
+        "since": since,
+        "until": until,
+        "previous_since": prev_since,
+        "previous_until": prev_until,
+        "days_in_range": days_in_range,
+        "granularity": granularity,
+        "periods": [{"key": k, "label": l} for k, l in periods],
+        "countries": countries,
+        "series": series,
+        "totals": totals,
+    })
+
+
 @app.route("/api/google/shopping-comparison")
 def api_google_shopping_comparison():
     """Series temporales de campañas SHOPPING de Google agrupadas por pais."""

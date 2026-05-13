@@ -24,6 +24,12 @@ const state = {
     // Drill-down de Search por ad group (cache por pais + paises expandidos)
     searchAdGroupsByCountry: {},
     searchExpandedCountries: new Set(),
+    // === Meta (paralelo a Shopping) ===
+    metaGranularity: 'weekly',
+    metaDisabledCountries: new Set(),
+    metaPayload: null,
+    metaSortBy: 'cost',
+    metaSortDir: 'desc',
     alertsPayload: null,      // cache del ultimo payload de alertas para refiltrar por tab
     activeTab: 'resumen',     // pestana activa: resumen | shopping | search | hubspot
 };
@@ -129,6 +135,7 @@ const fetchAlerts = ()     => fetchJson(`/api/alerts${state.country ? '?country=
 const fetchShoppingComparison = () => fetchJson(`/api/google/shopping-comparison?${buildQuery({granularity: state.shoppingGranularity})}`);
 const fetchSearchComparison   = () => fetchJson(`/api/google/search-comparison?${buildQuery({granularity: state.searchGranularity})}`);
 const fetchSearchAdGroups     = (country) => fetchJson(`/api/google/search-ad-groups?${buildQuery({country: country || ''})}`);
+const fetchMetaComparison     = () => fetchJson(`/api/meta/country-comparison?${buildQuery({granularity: state.metaGranularity})}`);
 
 // Google Ads APIs
 const fetchGoogleKpis = ()      => fetchJson(`/api/google/kpis?${buildQuery()}`);
@@ -583,7 +590,7 @@ async function loadAll() {
     state.searchAdGroupsByCountry = {};
     state.searchExpandedCountries = new Set();
     try {
-        const [k, ts, cs, hsK, hsF, hsSrc, hsSt, hsCo, wk, gK, gCs, al, sh, sr] = await Promise.all([
+        const [k, ts, cs, hsK, hsF, hsSrc, hsSt, hsCo, wk, gK, gCs, al, sh, sr, mt] = await Promise.all([
             fetchKpis(), fetchTimeseries(), fetchCampaigns(),
             fetchHsKpis(), fetchHsFunnel(), fetchHsBySource(),
             fetchHsByStatus(), fetchHsByCountry(),
@@ -592,10 +599,12 @@ async function loadAll() {
             fetchAlerts(),
             fetchShoppingComparison(),
             fetchSearchComparison(),
+            fetchMetaComparison(),
         ]);
         renderAlerts(al);
         renderChannelComparison('shopping', sh);
         renderChannelComparison('search', sr);
+        renderChannelComparison('meta', mt);
         renderKpis(k);
         renderTimeseries(ts);
         state.campaigns = cs;
@@ -648,6 +657,10 @@ function filterAlertsByTab(alerts, tab) {
     }
     if (tab === 'search') {
         return alerts.filter(a => /\|\s*Search\s*\|/i.test(a.campaign_name || ''));
+    }
+    if (tab === 'meta') {
+        // Alertas Meta: filtrar por canal META (mas fiable que por naming)
+        return alerts.filter(a => (a.channel || '').toUpperCase() === 'META');
     }
     return alerts;
 }
@@ -809,9 +822,18 @@ async function loadSearchOnly() {
     }
 }
 
+async function loadMetaOnly() {
+    try {
+        renderChannelComparison('meta', await fetchMetaComparison());
+    } catch (e) {
+        toast('Error cargando comparativa Meta: ' + e.message, 'error');
+    }
+}
+
 // === Comparativa de canal (Shopping / Search) por pais ===
 // Estructura paralela: un set de DOM IDs prefijado por kind + un slot de charts por kind.
 const channelCharts = {
+    meta:     { cost: null, cpc: null, ctr: null },
     shopping: { cost: null, cpc: null, ctr: null },
     search:   { cost: null, cpc: null, ctr: null },
 };
@@ -1688,7 +1710,8 @@ function setupTabs() {
         setTimeout(() => {
             [chartTimeseries, chartTopCampaigns,
              channelCharts.shopping.cost, channelCharts.shopping.cpc, channelCharts.shopping.ctr,
-             channelCharts.search.cost,   channelCharts.search.cpc,   channelCharts.search.ctr]
+             channelCharts.search.cost,   channelCharts.search.cpc,   channelCharts.search.ctr,
+             channelCharts.meta.cost,     channelCharts.meta.cpc,     channelCharts.meta.ctr]
                 .forEach(c => { if (c) try { c.resize(); } catch (e) {} });
         }, 50);
         // Scroll arriba al cambiar
@@ -1858,9 +1881,20 @@ function init() {
         });
     });
 
+    // Selector de granularidad de la comparativa Meta por pais
+    $$('.mgran-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            $$('.mgran-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            state.metaGranularity = btn.dataset.mgran;
+            loadMetaOnly();
+        });
+    });
+
     setupTableSort();
     setupChannelTableSort('shopping');
     setupChannelTableSort('search');
+    setupChannelTableSort('meta');
     setupScrollControls();
     setupStickyHeightTracking();
     setupTabs();
