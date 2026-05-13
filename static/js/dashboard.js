@@ -33,6 +33,10 @@ const state = {
     // Drill-down de Meta por ad set (cache por pais + paises expandidos)
     metaAdSetsByCountry: {},
     metaExpandedCountries: new Set(),
+    // Filas expandidas en la tabla "Vista por periodos" (Resumen tab).
+    // Cada id es 'w-{section_idx}-{row_idx}'. No persistimos en localStorage
+    // (las expansiones se reinician al recargar la pagina).
+    weeklyExpandedRows: new Set(),
     // Tratamiento de boosted posts (LINK_CLICKS): 'hidden' | 'budget_hidden' | 'all'.
     // Default 'hidden' = vista limpia de marketing real de captacion.
     metaBoostedMode: (() => {
@@ -1586,24 +1590,61 @@ function renderWeekly(payload) {
     const colspan = 2 + periods.length;
     let bodyHtml = '';
 
-    sections.forEach(sec => {
+    // Cada fila con by_country tiene un ID estable para que el chevron pueda
+    // togglear sub-filas via data-attribute. Usamos seccion+indice de fila.
+    sections.forEach((sec, si) => {
         bodyHtml += `<tr class="section-title"><td class="col-label" colspan="${colspan}">${escapeHtml(sec.title)}</td></tr>`;
-        sec.rows.forEach(row => {
+        sec.rows.forEach((row, ri) => {
             const cls = [];
             if (row.indent) cls.push('row-indent');
             if (row.header) cls.push('row-header');
-            bodyHtml += `<tr class="${cls.join(' ')}">`;
+            const hasDrill = Array.isArray(row.by_country) && row.by_country.length > 0;
+            const rowId = `w-${si}-${ri}`;
+            if (hasDrill) {
+                cls.push('weekly-drill-row');
+            }
+            const expanded = state.weeklyExpandedRows && state.weeklyExpandedRows.has(rowId);
+            if (expanded) cls.push('expanded');
             const labelTooltip = row.note ? ` title="${escapeHtml(row.note)}"` : '';
             const labelExtra = row.note ? ' <span class="note-disabled">(pendiente)</span>' : '';
-            bodyHtml += `<td class="col-label"${labelTooltip}>${escapeHtml(row.label)}${labelExtra}</td>`;
+            const chevron = hasDrill
+                ? `<span class="drill-chevron ${expanded ? 'open' : ''}">&#9656;</span>`
+                : '';
+            const attrs = hasDrill ? ` data-weekly-row="${rowId}"` : '';
+            bodyHtml += `<tr class="${cls.join(' ')}"${attrs}>`;
+            bodyHtml += `<td class="col-label"${labelTooltip}>${chevron}${escapeHtml(row.label)}${labelExtra}</td>`;
             bodyHtml += `<td class="col-total">${fmtCell(row.total, row.format)}</td>`;
             row.values.forEach(v => {
                 bodyHtml += `<td class="col-period">${fmtCell(v, row.format)}</td>`;
             });
             bodyHtml += '</tr>';
+            // Sub-filas por pais (si la fila esta expandida en state)
+            if (hasDrill && expanded) {
+                row.by_country.forEach(bc => {
+                    bodyHtml += `<tr class="weekly-subrow" data-weekly-parent="${rowId}">`;
+                    bodyHtml += `<td class="col-label weekly-subrow-label">${flagImg(bc.label)}${escapeHtml(bc.label)}</td>`;
+                    bodyHtml += `<td class="col-total">${fmtCell(bc.total, row.format)}</td>`;
+                    bc.values.forEach(v => {
+                        bodyHtml += `<td class="col-period">${fmtCell(v, row.format)}</td>`;
+                    });
+                    bodyHtml += '</tr>';
+                });
+            }
         });
     });
     tbody.innerHTML = bodyHtml;
+
+    // Click handler de las filas con drill-down: toggle expansion + re-render
+    tbody.querySelectorAll('tr.weekly-drill-row').forEach(tr => {
+        tr.addEventListener('click', () => {
+            const id = tr.dataset.weeklyRow;
+            if (!state.weeklyExpandedRows) state.weeklyExpandedRows = new Set();
+            if (state.weeklyExpandedRows.has(id)) state.weeklyExpandedRows.delete(id);
+            else state.weeklyExpandedRows.add(id);
+            renderWeekly(payload);
+        });
+    });
+
     // Refresca estado de botones de scroll tras inyectar contenido
     setTimeout(() => {
         const wrap = document.getElementById('weekly-wrapper');

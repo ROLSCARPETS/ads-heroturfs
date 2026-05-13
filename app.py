@@ -1142,50 +1142,214 @@ def api_weekly():
     tot_cac = (sum_spend_total / sum_cerrados) if sum_cerrados else 0
     tot_roas = (sum_revenue / sum_spend_total) if sum_spend_total else 0
 
-    def row(label, vals, total, fmt, indent=False, header=False, note=None):
+    # === Drill-down por país: cargamos por (country, period) las mismas
+    # metricas y derivamos CPL/Tasa/CAC/ROAS por país. Solo aplica a los rows
+    # base (no metricas derivadas) - las derivadas las calculamos a partir
+    # de los bases por país.
+    spend_meta_bc = {}      # {country: [n]}
+    spend_google_bc = {}
+    leads_meta_bc = {}
+    leads_google_bc = {}
+    leads_other_bc = {}
+    cerrados_bc = {}
+    deals_won_bc = {}
+    revenue_bc = {}
+
+    def _bc_add(d, country, idx, value):
+        if not country:
+            return
+        if country not in d:
+            d[country] = [0] * n
+        d[country][idx] = (d[country][idx] or 0) + (value or 0)
+
+    with _get_conn() as conn:
+        sql = (
+            f"SELECT c.country country, {period_expr_meta} p, SUM(i.spend) s "
+            "FROM insights_daily i JOIN campaigns c ON c.id = i.campaign_id "
+            "WHERE i.date BETWEEN ? AND ?"
+        )
+        params = [since, until]
+        if country:
+            sql += " AND c.country = ?"
+            params.append(country)
+        sql += " GROUP BY c.country, p"
+        for r in conn.execute(sql, params):
+            i = period_idx.get(r["p"])
+            if i is None: continue
+            _bc_add(spend_meta_bc, r["country"], i, r["s"])
+
+        sql_g = (
+            f"SELECT c.country country, {period_expr_meta} p, SUM(i.cost) s "
+            "FROM google_insights_daily i JOIN google_campaigns c ON c.id = i.campaign_id "
+            "WHERE i.date BETWEEN ? AND ?"
+        )
+        params_g = [since, until]
+        if country:
+            sql_g += " AND c.country = ?"
+            params_g.append(country)
+        sql_g += " GROUP BY c.country, p"
+        for r in conn.execute(sql_g, params_g):
+            i = period_idx.get(r["p"])
+            if i is None: continue
+            _bc_add(spend_google_bc, r["country"], i, r["s"])
+
+        sql = (
+            f"SELECT pais country, {period_expr_hs} p, fuentes_de_captacion_especificas f, COUNT(*) c "
+            f"FROM hubspot_contacts WHERE createdate BETWEEN ? AND ?{pais_clause} "
+            "GROUP BY pais, p, f"
+        )
+        for r in conn.execute(sql, [since_hs, until_hs, *pais_params]):
+            i = period_idx.get(r["p"])
+            if i is None: continue
+            f = r["f"]
+            if f == HUBSPOT_META_SOURCE:
+                _bc_add(leads_meta_bc, r["country"], i, r["c"])
+            elif f == HUBSPOT_GOOGLE_SOURCE:
+                _bc_add(leads_google_bc, r["country"], i, r["c"])
+            else:
+                _bc_add(leads_other_bc, r["country"], i, r["c"])
+
+        won_placeholders = ",".join("?" for _ in WON_LEAD_STATUSES)
+        sql = (
+            f"SELECT pais country, {period_expr_hs} p, COUNT(*) c FROM hubspot_contacts "
+            f"WHERE createdate BETWEEN ? AND ? AND hs_lead_status IN ({won_placeholders}){pais_clause} "
+            "GROUP BY pais, p"
+        )
+        for r in conn.execute(sql, [since_hs, until_hs, *WON_LEAD_STATUSES, *pais_params]):
+            i = period_idx.get(r["p"])
+            if i is None: continue
+            _bc_add(cerrados_bc, r["country"], i, r["c"])
+
+        # Deals ganados + revenue por (pais, periodo): join via contacts
+        sql = (
+            f"SELECT c.pais country, {period_expr_hs_deal} p, "
+            "COUNT(DISTINCT d.id) c, COALESCE(SUM(d.amount), 0) rev "
+            "FROM hubspot_deals d "
+            "JOIN hubspot_deal_contacts dc ON dc.deal_id = d.id "
+            "JOIN hubspot_contacts c ON c.id = dc.contact_id "
+            "WHERE d.is_won = 1 AND d.createdate BETWEEN ? AND ?"
+            + (" AND c.pais = ?" if country else "")
+            + " GROUP BY c.pais, p"
+        )
+        params = [since_hs, until_hs] + ([country] if country else [])
+        for r in conn.execute(sql, params):
+            i = period_idx.get(r["p"])
+            if i is None: continue
+            _bc_add(deals_won_bc, r["country"], i, r["c"])
+            _bc_add(revenue_bc, r["country"], i, r["rev"])
+
+    # Conjunto de paises observados en cualquiera de las metricas
+    all_countries = set()
+    for d in (spend_meta_bc, spend_google_bc, leads_meta_bc, leads_google_bc,
+              leads_other_bc, cerrados_bc, deals_won_bc, revenue_bc):
+        all_countries.update(d.keys())
+
+    def _vals(d, c):
+        return d.get(c) or [0] * n
+
+    # Build derived bases por pais para CPL/Tasa/CAC/ROAS por pais
+    spend_total_bc = {c: [_vals(spend_meta_bc, c)[i] + _vals(spend_google_bc, c)[i] for i in range(n)] for c in all_countries}
+    leads_total_bc = {c: [_vals(leads_meta_bc, c)[i] + _vals(leads_google_bc, c)[i] + _vals(leads_other_bc, c)[i] for i in range(n)] for c in all_countries}
+    cpl_total_bc = {c: [(spend_total_bc[c][i] / leads_total_bc[c][i]) if leads_total_bc[c][i] else 0 for i in range(n)] for c in all_countries}
+    cpl_meta_bc = {c: [(_vals(spend_meta_bc, c)[i] / _vals(leads_meta_bc, c)[i]) if _vals(leads_meta_bc, c)[i] else 0 for i in range(n)] for c in all_countries}
+    cpl_google_bc = {c: [(_vals(spend_google_bc, c)[i] / _vals(leads_google_bc, c)[i]) if _vals(leads_google_bc, c)[i] else 0 for i in range(n)] for c in all_countries}
+    tasa_exito_bc = {c: [(_vals(cerrados_bc, c)[i] / leads_total_bc[c][i] * 100) if leads_total_bc[c][i] else 0 for i in range(n)] for c in all_countries}
+    cac_bc = {c: [(spend_total_bc[c][i] / _vals(cerrados_bc, c)[i]) if _vals(cerrados_bc, c)[i] else 0 for i in range(n)] for c in all_countries}
+    roas_bc = {c: [(_vals(revenue_bc, c)[i] / spend_total_bc[c][i]) if spend_total_bc[c][i] else 0 for i in range(n)] for c in all_countries}
+
+    def _by_country(data_bc, totals_func=None, sort_key=None):
+        """Convierte un dict {country: [n]} en lista de dicts ordenada por total desc.
+        totals_func opcional: si se pasa, calcula el total desde valores; si no, suma."""
+        items = []
+        for c in all_countries:
+            vals = _vals(data_bc, c)
+            total = totals_func(c) if totals_func else sum(vals)
+            items.append({
+                "label": c,
+                "values": [round(v, 2) for v in vals],
+                "total": round(total, 2),
+            })
+        items.sort(key=sort_key or (lambda x: -x["total"]))
+        return items
+
+    # Totales por pais para las metricas derivadas (recalculadas desde acumulado)
+    def _sum_country(d):
+        return lambda c: sum(_vals(d, c))
+    def _ratio_country(num_d, den_d, factor=1.0):
+        def fn(c):
+            num_total = sum(_vals(num_d, c))
+            den_total = sum(_vals(den_d, c))
+            return (num_total / den_total * factor) if den_total else 0
+        return fn
+
+    cpl_total_country = _ratio_country(spend_total_bc, leads_total_bc)
+    cpl_meta_country = _ratio_country(spend_meta_bc, leads_meta_bc)
+    cpl_google_country = _ratio_country(spend_google_bc, leads_google_bc)
+    tasa_country = _ratio_country(cerrados_bc, leads_total_bc, factor=100)
+    cac_country = _ratio_country(spend_total_bc, cerrados_bc)
+    roas_country = _ratio_country(revenue_bc, spend_total_bc)
+
+    def row(label, vals, total, fmt, indent=False, header=False, note=None, by_country=None):
         return {"label": label, "values": [round(v, 2) for v in vals], "total": round(total, 2),
-                "format": fmt, "indent": indent, "header": header, "note": note}
+                "format": fmt, "indent": indent, "header": header, "note": note,
+                "by_country": by_country}
 
     sections = [
         {
             "title": "Inversión por canales",
             "rows": [
-                row("Inversión total", spend_total, sum_spend_total, "eur", header=True),
-                row("Meta Ads", spend_meta, sum_spend_meta, "eur", indent=True),
-                row("Google Ads", spend_google, sum_spend_google, "eur", indent=True),
+                row("Inversión total", spend_total, sum_spend_total, "eur", header=True,
+                    by_country=_by_country(spend_total_bc)),
+                row("Meta Ads", spend_meta, sum_spend_meta, "eur", indent=True,
+                    by_country=_by_country(spend_meta_bc)),
+                row("Google Ads", spend_google, sum_spend_google, "eur", indent=True,
+                    by_country=_by_country(spend_google_bc)),
             ],
         },
         {
             "title": "Número de leads nuevos",
             "rows": [
-                row("Leads totales", leads_total, sum_leads_total, "int", header=True),
-                row("Meta", leads_meta, sum_leads_meta, "int", indent=True),
-                row("Google", leads_google, sum_leads_google, "int", indent=True),
-                row("Desconocido / Otros", leads_other, sum_leads_other, "int", indent=True),
+                row("Leads totales", leads_total, sum_leads_total, "int", header=True,
+                    by_country=_by_country(leads_total_bc)),
+                row("Meta", leads_meta, sum_leads_meta, "int", indent=True,
+                    by_country=_by_country(leads_meta_bc)),
+                row("Google", leads_google, sum_leads_google, "int", indent=True,
+                    by_country=_by_country(leads_google_bc)),
+                row("Desconocido / Otros", leads_other, sum_leads_other, "int", indent=True,
+                    by_country=_by_country(leads_other_bc)),
             ],
         },
         {
             "title": "CPL (Coste por Lead)",
             "rows": [
-                row("CPL total", cpl_total, tot_cpl_total, "eur", header=True),
-                row("Meta", cpl_meta, tot_cpl_meta, "eur", indent=True),
-                row("Google", cpl_google, tot_cpl_google, "eur", indent=True),
+                row("CPL total", cpl_total, tot_cpl_total, "eur", header=True,
+                    by_country=_by_country(cpl_total_bc, totals_func=cpl_total_country)),
+                row("Meta", cpl_meta, tot_cpl_meta, "eur", indent=True,
+                    by_country=_by_country(cpl_meta_bc, totals_func=cpl_meta_country)),
+                row("Google", cpl_google, tot_cpl_google, "eur", indent=True,
+                    by_country=_by_country(cpl_google_bc, totals_func=cpl_google_country)),
             ],
         },
         {
             "title": "Conversion",
             "rows": [
-                row("Cerrados (convertidos en cliente)", cerrados, sum_cerrados, "int"),
-                row("Tasa de éxito (Lead -> Cliente)", tasa_exito, tot_tasa, "pct"),
-                row("CAC (Coste de adquisición)", cac, tot_cac, "eur"),
+                row("Cerrados (convertidos en cliente)", cerrados, sum_cerrados, "int",
+                    by_country=_by_country(cerrados_bc)),
+                row("Tasa de éxito (Lead -> Cliente)", tasa_exito, tot_tasa, "pct",
+                    by_country=_by_country(tasa_exito_bc, totals_func=tasa_country)),
+                row("CAC (Coste de adquisición)", cac, tot_cac, "eur",
+                    by_country=_by_country(cac_bc, totals_func=cac_country)),
             ],
         },
         {
             "title": "Revenue (Ventas netas HubSpot)",
             "rows": [
-                row("Ventas netas", revenue, sum_revenue, "eur", header=True),
-                row("Deals ganados", deals_won, sum(deals_won), "int", indent=True),
-                row("ROAS (Revenue / Inversión)", roas, tot_roas, "x"),
+                row("Ventas netas", revenue, sum_revenue, "eur", header=True,
+                    by_country=_by_country(revenue_bc)),
+                row("Deals ganados", deals_won, sum(deals_won), "int", indent=True,
+                    by_country=_by_country(deals_won_bc)),
+                row("ROAS (Revenue / Inversión)", roas, tot_roas, "x",
+                    by_country=_by_country(roas_bc, totals_func=roas_country)),
             ],
         },
     ]

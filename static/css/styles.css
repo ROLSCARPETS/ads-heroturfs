@@ -1103,6 +1103,31 @@ h1, h2, h3 { font-weight: 600; letter-spacing: -0.01em; }
     padding: 16px 20px;
 }
 
+/* === Drill-down por pais en la vista por periodos del Resumen === */
+#weekly-table tr.weekly-drill-row {
+    cursor: pointer;
+    transition: background 0.15s;
+}
+#weekly-table tr.weekly-drill-row:hover {
+    background: linear-gradient(to right, rgba(0, 94, 148, 0.05), transparent);
+}
+#weekly-table tr.weekly-subrow {
+    background: var(--bg);
+    font-size: 12px;
+}
+#weekly-table tr.weekly-subrow .col-label {
+    padding-left: 36px;  /* indent visual bajo la fila padre */
+    font-weight: 500;
+    color: var(--text-muted);
+}
+#weekly-table tr.weekly-subrow .col-label .flag-img {
+    margin-right: 6px;
+}
+#weekly-table tr.weekly-subrow .col-total,
+#weekly-table tr.weekly-subrow .col-period {
+    color: var(--text-muted);
+}
+
 /* === Drill-down de Search a nivel ad group === */
 /* Filas de la tabla totales que pinchan para expandir ad groups */
 tr.drill-row {
