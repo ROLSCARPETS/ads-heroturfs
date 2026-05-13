@@ -15,6 +15,8 @@ const state = {
     shoppingPayload: null,    // cache del ultimo payload para re-render sin refetch
     shoppingSortBy: 'cost',   // columna por la que se ordena la tabla shopping
     shoppingSortDir: 'desc',  // asc | desc
+    alertsPayload: null,      // cache del ultimo payload de alertas para refiltrar por tab
+    activeTab: 'resumen',     // pestana activa: resumen | shopping | hubspot
 };
 
 // Paleta de colores por pais para los graficos comparativos
@@ -621,10 +623,28 @@ function deltaTag(pct, direction = 'up-good') {
 }
 
 // === Alerts render ===
+// Filtra las alertas segun la pestana activa.
+// Shopping tab -> solo campanas Shopping (basado en convencion de naming "| Shopping |").
+// Resto -> todas.
+function filterAlertsByTab(alerts, tab) {
+    if (tab === 'shopping') {
+        return alerts.filter(a => /\|\s*Shopping\s*\|/i.test(a.campaign_name || ''));
+    }
+    return alerts;
+}
+
 function renderAlerts(payload) {
+    state.alertsPayload = payload;
+    renderAlertsFiltered();
+}
+
+function renderAlertsFiltered() {
+    const payload = state.alertsPayload;
+    if (!payload) return;
     const bar = $('#alerts-bar');
     const list = $('#alerts-list');
-    const alerts = payload.alerts || [];
+    const allAlerts = payload.alerts || [];
+    const alerts = filterAlertsByTab(allAlerts, state.activeTab);
     if (!alerts.length) {
         bar.style.display = 'none';
         return;
@@ -1452,9 +1472,12 @@ function setupTabs() {
     const panes = $$('.tab-pane');
 
     const activate = (target) => {
+        state.activeTab = target;
         tabs.forEach(b => b.classList.toggle('active', b.dataset.tab === target));
         panes.forEach(p => p.classList.toggle('active', p.dataset.tab === target));
         try { localStorage.setItem('dashboard-tab', target); } catch (e) {}
+        // Re-filtrar alertas para que solo se vean las del tab actual (Shopping -> solo Shopping)
+        renderAlertsFiltered();
         // Re-resize charts del tab activo (Chart.js no calcula bien si el canvas estaba display:none)
         setTimeout(() => {
             [chartTimeseries, chartTopCampaigns, chartShoppingCost, chartShoppingCpc, chartShoppingCtr]
