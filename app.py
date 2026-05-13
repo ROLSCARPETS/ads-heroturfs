@@ -2221,6 +2221,119 @@ def api_google_search_ad_groups():
     })
 
 
+@app.route("/api/resumen-comparison")
+def api_resumen_comparison():
+    """Datos por (pais, periodo) para los 3 charts del top del Resumen:
+    - Inversion: Meta.spend + Google.cost
+    - Leads: contactos HubSpot (cualquier fuente)
+    - CPL: Inversion / Leads
+
+    Respeta filtros country + rango. Granularidad propia (default weekly).
+    """
+    granularity = request.args.get("granularity", "weekly")
+    if granularity not in ("daily", "weekly", "monthly"):
+        granularity = "weekly"
+
+    since, until, _days = _range_from_request()
+    since_hs = _date_to_hubspot_iso(since)
+    until_hs = _date_to_hubspot_iso(until, end=True)
+    country = request.args.get("country") or None
+
+    periods = _generate_periods(since, until, granularity)
+    period_keys = [p[0] for p in periods]
+    period_idx = {k: i for i, k in enumerate(period_keys)}
+    n = len(periods)
+
+    period_expr = _period_expr(granularity)
+    period_expr_hs = _hubspot_period_expr(granularity)
+
+    pais_clause = " AND pais = ?" if country else ""
+    pais_params = [country] if country else []
+
+    spend_bc = {}   # {country: [n vals]}
+    leads_bc = {}   # {country: [n vals]}
+
+    def _bc_add(d, country_val, i, v):
+        if not country_val:
+            return
+        if country_val not in d:
+            d[country_val] = [0] * n
+        d[country_val][i] += v or 0
+
+    with _get_conn() as conn:
+        # Meta spend por (country, period)
+        sql = (
+            f"SELECT c.country country, {period_expr} p, SUM(i.spend) s "
+            "FROM insights_daily i JOIN campaigns c ON c.id = i.campaign_id "
+            "WHERE i.date BETWEEN ? AND ?"
+        )
+        params = [since, until]
+        if country:
+            sql += " AND c.country = ?"
+            params.append(country)
+        sql += " GROUP BY c.country, p"
+        for r in conn.execute(sql, params):
+            i = period_idx.get(r["p"])
+            if i is not None:
+                _bc_add(spend_bc, r["country"], i, r["s"])
+
+        # Google spend por (country, period)
+        sql_g = (
+            f"SELECT c.country country, {period_expr} p, SUM(i.cost) s "
+            "FROM google_insights_daily i JOIN google_campaigns c ON c.id = i.campaign_id "
+            "WHERE i.date BETWEEN ? AND ?"
+        )
+        params_g = [since, until]
+        if country:
+            sql_g += " AND c.country = ?"
+            params_g.append(country)
+        sql_g += " GROUP BY c.country, p"
+        for r in conn.execute(sql_g, params_g):
+            i = period_idx.get(r["p"])
+            if i is not None:
+                _bc_add(spend_bc, r["country"], i, r["s"])
+
+        # HubSpot leads por (country, period) - todas las fuentes
+        sql = (
+            f"SELECT pais country, {period_expr_hs} p, COUNT(*) c "
+            f"FROM hubspot_contacts WHERE createdate BETWEEN ? AND ?{pais_clause} "
+            "GROUP BY pais, p"
+        )
+        for r in conn.execute(sql, [since_hs, until_hs, *pais_params]):
+            i = period_idx.get(r["p"])
+            if i is not None:
+                _bc_add(leads_bc, r["country"], i, r["c"])
+
+    # Conjunto de paises observados en cualquiera de las metricas. Ordenar por
+    # spend total desc.
+    all_countries = set(spend_bc.keys()) | set(leads_bc.keys())
+    countries = sorted(
+        all_countries,
+        key=lambda c: -sum(spend_bc.get(c, [0] * n)),
+    )
+
+    series = {"cost": {}, "leads": {}, "cpl": {}}
+    for c in countries:
+        cost_vals = spend_bc.get(c) or [0] * n
+        leads_vals = leads_bc.get(c) or [0] * n
+        cpl_vals = [
+            round((cost_vals[i] / leads_vals[i]), 2) if leads_vals[i] > 0 else 0
+            for i in range(n)
+        ]
+        series["cost"][c] = [round(v, 2) for v in cost_vals]
+        series["leads"][c] = leads_vals
+        series["cpl"][c] = cpl_vals
+
+    return jsonify({
+        "since": since,
+        "until": until,
+        "granularity": granularity,
+        "periods": [{"key": k, "label": l} for k, l in periods],
+        "countries": countries,
+        "series": series,
+    })
+
+
 @app.route("/api/google/sync", methods=["POST"])
 def api_google_sync():
     """Lanza sync de Google Ads. Devuelve error si falta Developer Token."""

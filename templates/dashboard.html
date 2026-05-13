@@ -101,6 +101,41 @@
     <main class="content">
         <!-- ============== TAB: RESUMEN ============== -->
         <section class="tab-pane active" data-tab="resumen">
+        <!-- Top: 3 charts por pais (Inversion / Leads / CPL) -->
+        <section class="shopping-card resumen-top-card">
+            <div class="shopping-header">
+                <span id="resumen-info" class="weekly-info">-</span>
+                <div class="granularity-selector">
+                    <button class="rgran-btn" data-rgran="daily">D&iacute;a</button>
+                    <button class="rgran-btn active" data-rgran="weekly">Semana</button>
+                    <button class="rgran-btn" data-rgran="monthly">Mes</button>
+                </div>
+            </div>
+            <div class="shopping-grid">
+                <div class="chart-card chart-shopping">
+                    <div class="chart-header">
+                        <h2>&#128176; Inversi&oacute;n</h2>
+                        <span class="chart-subtitle">Coste por pa&iacute;s (Meta + Google)</span>
+                    </div>
+                    <div class="chart-body"><canvas id="chart-resumen-cost"></canvas></div>
+                </div>
+                <div class="chart-card chart-shopping">
+                    <div class="chart-header">
+                        <h2>&#128203; Leads</h2>
+                        <span class="chart-subtitle">Leads HubSpot por pa&iacute;s (todas las fuentes)</span>
+                    </div>
+                    <div class="chart-body"><canvas id="chart-resumen-leads"></canvas></div>
+                </div>
+                <div class="chart-card chart-shopping">
+                    <div class="chart-header">
+                        <h2>&#128176; CPL</h2>
+                        <span class="chart-subtitle">Coste por lead (EUR)</span>
+                    </div>
+                    <div class="chart-body"><canvas id="chart-resumen-cpl"></canvas></div>
+                </div>
+            </div>
+        </section>
+
         <!-- KPIs -->
         <section class="kpi-grid">
             <div class="kpi-card kpi-spend">

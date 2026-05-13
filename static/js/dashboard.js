@@ -33,6 +33,11 @@ const state = {
     // Drill-down de Meta por ad set (cache por pais + paises expandidos)
     metaAdSetsByCountry: {},
     metaExpandedCountries: new Set(),
+    // Granularidad de los 3 charts del top del Resumen (Inversion/Leads/CPL)
+    resumenGranularity: 'weekly',
+    // Set vacio (buildChannelChart espera DisabledCountries por kind; Resumen
+    // no expone chips de paises pero reusamos la misma funcion).
+    resumenDisabledCountries: new Set(),
     // Filas expandidas en la tabla "Vista por periodos" (Resumen tab).
     // Cada id es 'w-{section_idx}-{row_idx}'. No persistimos en localStorage
     // (las expansiones se reinician al recargar la pagina).
@@ -153,6 +158,7 @@ const fetchSearchComparison   = () => fetchJson(`/api/google/search-comparison?$
 const fetchSearchAdGroups     = (country) => fetchJson(`/api/google/search-ad-groups?${buildQuery({country: country || ''})}`);
 const fetchMetaComparison     = () => fetchJson(`/api/meta/country-comparison?${buildQuery({granularity: state.metaGranularity, boosted_mode: state.metaBoostedMode})}`);
 const fetchMetaAdSets         = (country) => fetchJson(`/api/meta/ad-sets?${buildQuery({country: country || '', boosted_mode: state.metaBoostedMode})}`);
+const fetchResumenComparison  = () => fetchJson(`/api/resumen-comparison?${buildQuery({granularity: state.resumenGranularity})}`);
 
 // Google Ads APIs
 const fetchGoogleKpis = ()      => fetchJson(`/api/google/kpis?${buildQuery()}`);
@@ -609,7 +615,7 @@ async function loadAll() {
     state.metaAdSetsByCountry = {};
     state.metaExpandedCountries = new Set();
     try {
-        const [k, ts, cs, hsK, hsF, hsSrc, hsSt, hsCo, wk, gK, gCs, al, sh, sr, mt] = await Promise.all([
+        const [k, ts, cs, hsK, hsF, hsSrc, hsSt, hsCo, wk, gK, gCs, al, sh, sr, mt, rs] = await Promise.all([
             fetchKpis(), fetchTimeseries(), fetchCampaigns(),
             fetchHsKpis(), fetchHsFunnel(), fetchHsBySource(),
             fetchHsByStatus(), fetchHsByCountry(),
@@ -619,11 +625,13 @@ async function loadAll() {
             fetchShoppingComparison(),
             fetchSearchComparison(),
             fetchMetaComparison(),
+            fetchResumenComparison(),
         ]);
         renderAlerts(al);
         renderChannelComparison('shopping', sh);
         renderChannelComparison('search', sr);
         renderChannelComparison('meta', mt);
+        renderResumenComparison(rs);
         renderKpis(k);
         renderTimeseries(ts);
         state.campaigns = cs;
@@ -851,9 +859,42 @@ async function loadMetaOnly() {
     }
 }
 
+async function loadResumenComparisonOnly() {
+    try {
+        renderResumenComparison(await fetchResumenComparison());
+    } catch (e) {
+        toast('Error cargando charts del Resumen: ' + e.message, 'error');
+    }
+}
+
+// Renderiza los 3 charts del top del Resumen (Inversion / Leads / CPL).
+// No tiene chips ni tabla de totales: solo charts.
+function renderResumenComparison(payload) {
+    if (!payload || !payload.countries) return;
+    const charts = channelCharts.resumen;
+    if (charts.cost) charts.cost.destroy();
+    if (charts.leads) charts.leads.destroy();
+    if (charts.cpl) charts.cpl.destroy();
+
+    const fmtEurFn = (v) => fmtEur.format(v || 0) + ' €';
+    const fmtIntFn = (v) => fmtInt.format(v || 0);
+    const fmtCplFn = (v) => fmtEur.format(v || 0) + ' €';
+
+    charts.cost  = buildChannelChart('resumen', 'chart-resumen-cost',  payload, 'cost',  'EUR',         fmtEurFn, 'bar');
+    charts.leads = buildChannelChart('resumen', 'chart-resumen-leads', payload, 'leads', 'Leads',       fmtIntFn, 'bar');
+    charts.cpl   = buildChannelChart('resumen', 'chart-resumen-cpl',   payload, 'cpl',   'EUR / lead',  fmtCplFn, 'line');
+
+    const info = document.getElementById('resumen-info');
+    if (info) {
+        const granLabel = payload.granularity === 'monthly' ? 'meses' : payload.granularity === 'weekly' ? 'semanas' : 'días';
+        info.textContent = `${payload.periods.length} ${granLabel} · ${payload.since} a ${payload.until} · ${payload.countries.length} países`;
+    }
+}
+
 // === Comparativa de canal (Shopping / Search) por pais ===
 // Estructura paralela: un set de DOM IDs prefijado por kind + un slot de charts por kind.
 const channelCharts = {
+    resumen:  { cost: null, leads: null, cpl: null },
     meta:     { cost: null, cpc: null, ctr: null },
     shopping: { cost: null, cpc: null, ctr: null },
     search:   { cost: null, cpc: null, ctr: null },
@@ -1874,9 +1915,10 @@ function setupTabs() {
         // Re-resize charts del tab activo (Chart.js no calcula bien si el canvas estaba display:none)
         setTimeout(() => {
             [chartTimeseries, chartTopCampaigns,
-             channelCharts.shopping.cost, channelCharts.shopping.cpc, channelCharts.shopping.ctr,
-             channelCharts.search.cost,   channelCharts.search.cpc,   channelCharts.search.ctr,
-             channelCharts.meta.cost,     channelCharts.meta.cpc,     channelCharts.meta.ctr]
+             channelCharts.resumen.cost,  channelCharts.resumen.leads, channelCharts.resumen.cpl,
+             channelCharts.shopping.cost, channelCharts.shopping.cpc,  channelCharts.shopping.ctr,
+             channelCharts.search.cost,   channelCharts.search.cpc,    channelCharts.search.ctr,
+             channelCharts.meta.cost,     channelCharts.meta.cpc,      channelCharts.meta.ctr]
                 .forEach(c => { if (c) try { c.resize(); } catch (e) {} });
         }, 50);
         // Scroll arriba al cambiar
@@ -2043,6 +2085,16 @@ function init() {
             btn.classList.add('active');
             state.searchGranularity = btn.dataset.srgran;
             loadSearchOnly();
+        });
+    });
+
+    // Selector de granularidad de los 3 charts del top del Resumen
+    $$('.rgran-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            $$('.rgran-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            state.resumenGranularity = btn.dataset.rgran;
+            loadResumenComparisonOnly();
         });
     });
 

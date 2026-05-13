@@ -999,7 +999,7 @@ h1, h2, h3 { font-weight: 600; letter-spacing: -0.01em; }
     font-style: italic;
     font-size: 10px;
 }
-.wgran-btn, .sgran-btn, .srgran-btn, .mgran-btn {
+.wgran-btn, .sgran-btn, .srgran-btn, .mgran-btn, .rgran-btn {
     background: transparent;
     border: none;
     padding: 4px 10px;
@@ -1011,8 +1011,8 @@ h1, h2, h3 { font-weight: 600; letter-spacing: -0.01em; }
     transition: all 0.15s;
     font-family: inherit;
 }
-.wgran-btn:hover, .sgran-btn:hover, .srgran-btn:hover, .mgran-btn:hover { color: var(--text); }
-.wgran-btn.active, .sgran-btn.active, .srgran-btn.active, .mgran-btn.active {
+.wgran-btn:hover, .sgran-btn:hover, .srgran-btn:hover, .mgran-btn:hover, .rgran-btn:hover { color: var(--text); }
+.wgran-btn.active, .sgran-btn.active, .srgran-btn.active, .mgran-btn.active, .rgran-btn.active {
     background: var(--surface);
     color: var(--accent);
     box-shadow: var(--shadow-sm);
