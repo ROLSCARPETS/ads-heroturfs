@@ -658,11 +658,19 @@ h1, h2, h3 { font-weight: 600; letter-spacing: -0.01em; }
     user-select: none;
     white-space: nowrap;
 }
-.meta-toggle input[type="checkbox"] {
-    accent-color: var(--accent);
+.meta-toggle:hover { color: var(--text); }
+.meta-select {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 3px 8px;
+    font-size: 12px;
+    font-family: inherit;
+    color: var(--text);
     cursor: pointer;
 }
-.meta-toggle:hover { color: var(--text); }
+.meta-select:hover { border-color: var(--accent); }
+.meta-select:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(0, 94, 148, 0.1); }
 .google-status-msg {
     color: var(--warning);
     font-size: 12px;

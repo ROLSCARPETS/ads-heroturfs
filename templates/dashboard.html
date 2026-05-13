@@ -326,9 +326,13 @@
             <div class="shopping-header">
                 <span id="meta-info" class="weekly-info">-</span>
                 <div class="meta-header-controls">
-                    <label class="meta-toggle" title="Ocultar 'Publicación de Instagram' (boosted posts con objetivo LINK_CLICKS)">
-                        <input type="checkbox" id="meta-hide-boosted" checked>
-                        <span>Ocultar boosted posts</span>
+                    <label class="meta-toggle" title="Como tratar las 'Publicación de Instagram' (campañas LINK_CLICKS con presupuestos micro)">
+                        <span>Boosted posts:</span>
+                        <select id="meta-boosted-mode" class="meta-select">
+                            <option value="hidden">Ocultar siempre</option>
+                            <option value="budget_hidden">Ocultar solo del Pres./día</option>
+                            <option value="all">Mostrar todas</option>
+                        </select>
                     </label>
                     <div class="granularity-selector">
                         <button class="mgran-btn" data-mgran="daily">D&iacute;a</button>
