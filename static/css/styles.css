@@ -93,16 +93,44 @@ h1, h2, h3 { font-weight: 600; letter-spacing: -0.01em; }
 .tab-pane.active { display: block; }
 
 /* === Topbar === */
+/* Fondo Hero Navy + logo blanco para que la marca tenga presencia */
 .topbar {
-    background: var(--surface);
-    border-bottom: 1px solid var(--border);
-    padding: 16px 32px;
+    background: var(--hero-navy);
+    border-bottom: 1px solid var(--hero-navy);
+    padding: 14px 32px;
     display: flex;
     justify-content: space-between;
     align-items: center;
     flex-wrap: wrap;
     gap: 16px;
+    color: #fff;
 }
+.topbar .subtitle { color: rgba(255, 255, 255, 0.65); }
+/* Botones de sync sobre Navy: invertimos a contrast outline */
+.topbar .btn-primary {
+    background: #fff;
+    color: var(--hero-navy);
+}
+.topbar .btn-primary:hover { background: var(--hero-blue); color: #fff; }
+/* Selector de rango sobre fondo Navy */
+.topbar .range-selector {
+    background: rgba(255, 255, 255, 0.10);
+    border-color: rgba(255, 255, 255, 0.18);
+}
+.topbar .range-btn { color: rgba(255, 255, 255, 0.70); }
+.topbar .range-btn:hover { color: #fff; }
+.topbar .range-btn.active {
+    background: #fff;
+    color: var(--hero-navy);
+}
+/* Country dropdown sobre Navy */
+.topbar .country-trigger {
+    background: rgba(255, 255, 255, 0.10);
+    border-color: rgba(255, 255, 255, 0.18);
+    color: #fff;
+}
+.topbar .country-trigger:hover { border-color: #fff; }
+.topbar .country-trigger-arrow { color: rgba(255, 255, 255, 0.70); }
 
 .topbar-left h1 {
     font-size: 18px;
@@ -120,12 +148,14 @@ h1, h2, h3 { font-weight: 600; letter-spacing: -0.01em; }
     display: block;
 }
 
-/* Logo Heroturfs en topbar (manual de marca: PNG transparente) */
+/* Logo Heroturfs en topbar. El PNG oficial es Hero Navy; lo invertimos a
+   blanco con filter porque la topbar tiene fondo Navy. */
 .brand-logo {
-    height: 32px;
+    height: 44px;
     width: auto;
     display: block;
     object-fit: contain;
+    filter: brightness(0) invert(1);
 }
 
 .topbar-right {
