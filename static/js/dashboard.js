@@ -596,6 +596,30 @@ async function loadAll() {
     }
 }
 
+// Mini-tag de delta para celdas de tabla. direction:
+//   'up-good'   -> subida verde (clicks, impressions, ctr, conv, revenue, utilization, ...)
+//   'down-good' -> bajada verde (cpc, cpl, cpm, cac)
+//   'neutral'   -> azul/gris (cost, daily_budget, budget_period: subir/bajar no es bueno per se)
+function deltaTag(pct, direction = 'up-good') {
+    if (pct === null || pct === undefined) return '';
+    const isFlat = Math.abs(pct) < 0.5;
+    let cls = 'delta-flat';
+    let arrow = '→';
+    if (!isFlat) {
+        const isUp = pct > 0;
+        if (isUp) {
+            arrow = '↑';
+            cls = direction === 'up-good' ? 'delta-up' : direction === 'down-good' ? 'delta-down' : 'delta-flat';
+        } else {
+            arrow = '↓';
+            cls = direction === 'down-good' ? 'delta-up' : direction === 'up-good' ? 'delta-down' : 'delta-flat';
+        }
+    }
+    const sign = pct > 0 ? '+' : '';
+    const pctStr = pct.toLocaleString('es-ES', { maximumFractionDigits: 1 });
+    return `<span class="delta-mini ${cls}"><span class="delta-mini-arrow">${arrow}</span> ${sign}${pctStr}%</span>`;
+}
+
 // === Alerts render ===
 function renderAlerts(payload) {
     const bar = $('#alerts-bar');
@@ -1052,17 +1076,18 @@ function renderShoppingComparison(payload, skipChipsRebuild = false) {
         }
         const budgetDay = t.daily_budget > 0 ? fmtEur.format(t.daily_budget) + ' €' : '<span class="empty">-</span>';
         const budgetPer = t.budget_period ? fmtEur.format(t.budget_period) + ' €' : '<span class="empty">-</span>';
+        const d = t.deltas || {};
         return `
             <tr>
                 <td>${flagImg(c)}<span style="color:${colorForCountry(c)};font-weight:600;">●</span> ${escapeHtml(c)}</td>
-                <td class="td-num">${fmtEur.format(t.cost)} €</td>
-                <td class="td-num">${budgetDay}</td>
-                <td class="td-num">${budgetPer}</td>
-                <td class="td-num">${utilCell}</td>
-                <td class="td-num">${fmtInt.format(t.clicks)}</td>
-                <td class="td-num">${fmtInt.format(t.impressions)}</td>
-                <td class="td-num">${(t.ctr || 0).toLocaleString('es-ES', { maximumFractionDigits: 2 })}%</td>
-                <td class="td-num">${fmtEur3.format(t.cpc)} €</td>
+                <td class="td-num">${fmtEur.format(t.cost)} €${deltaTag(d.cost_pct, 'neutral')}</td>
+                <td class="td-num">${budgetDay}${deltaTag(d.daily_budget_pct, 'neutral')}</td>
+                <td class="td-num">${budgetPer}${deltaTag(d.budget_period_pct, 'neutral')}</td>
+                <td class="td-num">${utilCell}${deltaTag(d.utilization_pct_pct, 'up-good')}</td>
+                <td class="td-num">${fmtInt.format(t.clicks)}${deltaTag(d.clicks_pct, 'up-good')}</td>
+                <td class="td-num">${fmtInt.format(t.impressions)}${deltaTag(d.impressions_pct, 'up-good')}</td>
+                <td class="td-num">${(t.ctr || 0).toLocaleString('es-ES', { maximumFractionDigits: 2 })}%${deltaTag(d.ctr_pct, 'up-good')}</td>
+                <td class="td-num">${fmtEur3.format(t.cpc)} €${deltaTag(d.cpc_pct, 'down-good')}</td>
             </tr>
         `;
     }).join('');
@@ -1081,6 +1106,32 @@ function renderShoppingComparison(payload, skipChipsRebuild = false) {
     const totCtr = sums.impressions > 0 ? (sums.clicks / sums.impressions * 100) : 0;
     const totCpc = sums.clicks > 0 ? (sums.cost / sums.clicks) : 0;
     const totUtil = sums.budget_period > 0 ? (sums.cost / sums.budget_period * 100) : null;
+
+    // Sumas del periodo anterior (mismo calculo pero con totals[c].previous)
+    const prevSums = sorted.reduce((acc, c) => {
+        const p = (payload.totals[c] || {}).previous || {};
+        acc.cost += p.cost || 0;
+        acc.daily_budget += p.daily_budget || 0;
+        acc.budget_period += p.budget_period || 0;
+        acc.clicks += p.clicks || 0;
+        acc.impressions += p.impressions || 0;
+        return acc;
+    }, { cost: 0, daily_budget: 0, budget_period: 0, clicks: 0, impressions: 0 });
+    const prevCtr = prevSums.impressions > 0 ? (prevSums.clicks / prevSums.impressions * 100) : 0;
+    const prevCpc = prevSums.clicks > 0 ? (prevSums.cost / prevSums.clicks) : 0;
+    const prevUtil = prevSums.budget_period > 0 ? (prevSums.cost / prevSums.budget_period * 100) : null;
+
+    const _dpct = (cur, prev) => (prev === null || prev === undefined || prev === 0) ? null : Math.round((cur - prev) / prev * 1000) / 10;
+    const dT = {
+        cost: _dpct(sums.cost, prevSums.cost),
+        daily_budget: _dpct(sums.daily_budget, prevSums.daily_budget),
+        budget_period: _dpct(sums.budget_period, prevSums.budget_period),
+        clicks: _dpct(sums.clicks, prevSums.clicks),
+        impressions: _dpct(sums.impressions, prevSums.impressions),
+        ctr: _dpct(totCtr, prevCtr),
+        cpc: _dpct(totCpc, prevCpc),
+        util: prevUtil !== null && totUtil !== null ? _dpct(totUtil, prevUtil) : null,
+    };
 
     let utilTot;
     if (totUtil === null) {
@@ -1103,14 +1154,14 @@ function renderShoppingComparison(payload, skipChipsRebuild = false) {
     tfoot.innerHTML = `
         <tr>
             <td>Total (${sorted.length} países)</td>
-            <td class="td-num">${fmtEur.format(sums.cost)} €</td>
-            <td class="td-num">${budgetDayTot}</td>
-            <td class="td-num">${budgetPerTot}</td>
-            <td class="td-num">${utilTot}</td>
-            <td class="td-num">${fmtInt.format(sums.clicks)}</td>
-            <td class="td-num">${fmtInt.format(sums.impressions)}</td>
-            <td class="td-num">${totCtr.toLocaleString('es-ES', { maximumFractionDigits: 2 })}%</td>
-            <td class="td-num">${sums.clicks > 0 ? fmtEur3.format(totCpc) + ' €' : '<span class="empty">-</span>'}</td>
+            <td class="td-num">${fmtEur.format(sums.cost)} €${deltaTag(dT.cost, 'neutral')}</td>
+            <td class="td-num">${budgetDayTot}${deltaTag(dT.daily_budget, 'neutral')}</td>
+            <td class="td-num">${budgetPerTot}${deltaTag(dT.budget_period, 'neutral')}</td>
+            <td class="td-num">${utilTot}${deltaTag(dT.util, 'up-good')}</td>
+            <td class="td-num">${fmtInt.format(sums.clicks)}${deltaTag(dT.clicks, 'up-good')}</td>
+            <td class="td-num">${fmtInt.format(sums.impressions)}${deltaTag(dT.impressions, 'up-good')}</td>
+            <td class="td-num">${totCtr.toLocaleString('es-ES', { maximumFractionDigits: 2 })}%${deltaTag(dT.ctr, 'up-good')}</td>
+            <td class="td-num">${sums.clicks > 0 ? fmtEur3.format(totCpc) + ' €' : '<span class="empty">-</span>'}${deltaTag(dT.cpc, 'down-good')}</td>
         </tr>
     `;
 }

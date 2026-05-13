@@ -1122,6 +1122,19 @@ h1, h2, h3 { font-weight: 600; letter-spacing: -0.01em; }
 #shopping-detail-table tbody tr:hover td:not(.col-total) { background: var(--bg); }
 #shopping-detail-table tbody td.empty { color: var(--text-muted); font-weight: 300; }
 
+/* Mini etiqueta de cambio vs periodo anterior (en celdas de la tabla) */
+.delta-mini {
+    display: block;
+    font-size: 10px;
+    font-weight: 600;
+    margin-top: 2px;
+    font-variant-numeric: tabular-nums;
+}
+.delta-mini.delta-up   { color: var(--success); }
+.delta-mini.delta-down { color: var(--danger); }
+.delta-mini.delta-flat { color: var(--text-muted); font-weight: 400; }
+.delta-mini-arrow { font-weight: 700; }
+
 /* Barra de utilizacion de presupuesto */
 .util-cell {
     display: flex;

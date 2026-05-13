@@ -1496,9 +1496,92 @@ def api_google_shopping_comparison():
             "utilization_pct": round(utilization, 1) if utilization is not None else None,
         }
 
+    # === Comparativa con periodo anterior (misma duracion, inmediatamente antes) ===
+    prev_since, prev_until = _previous_range(since, until)
+    prev_days = (date.fromisoformat(prev_until) - date.fromisoformat(prev_since)).days + 1
+    with _get_conn() as conn:
+        prev_cost_rows = conn.execute(
+            """
+            SELECT c.country country,
+                   SUM(i.cost) cost,
+                   SUM(i.clicks) clicks,
+                   SUM(i.impressions) impressions
+            FROM google_insights_daily i
+            JOIN google_campaigns c ON c.id = i.campaign_id
+            WHERE c.advertising_channel_type = 'SHOPPING'
+              AND i.date BETWEEN ? AND ?
+            GROUP BY c.country
+            """,
+            (prev_since, prev_until),
+        ).fetchall()
+        prev_budget_rows = conn.execute(
+            """
+            SELECT c.country country,
+                   SUM(bh.daily_budget) total_budget,
+                   AVG(bh.daily_budget) avg_daily_budget,
+                   COUNT(DISTINCT bh.date) days_in_period
+            FROM google_budget_history bh
+            JOIN google_campaigns c ON c.id = bh.campaign_id
+            WHERE c.advertising_channel_type = 'SHOPPING'
+              AND c.status = 'ENABLED'
+              AND bh.date BETWEEN ? AND ?
+            GROUP BY c.country
+            """,
+            (prev_since, prev_until),
+        ).fetchall()
+    prev_by_country = {r["country"]: dict(r) for r in prev_cost_rows}
+    prev_budget_by_country = {r["country"]: dict(r) for r in prev_budget_rows}
+
+    # Adjuntar previous + deltas a cada totals[country]
+    totals_previous = {}
+    for c in countries:
+        pc = prev_by_country.get(c, {})
+        pb = prev_budget_by_country.get(c, {})
+        p_cost = pc.get("cost") or 0
+        p_clicks = pc.get("clicks") or 0
+        p_imp = pc.get("impressions") or 0
+        p_daily = pb.get("avg_daily_budget") or 0
+        p_days_cov = pb.get("days_in_period") or 0
+        # Mismo criterio que en current: usar histórico si cubre >=50% del rango anterior
+        if p_days_cov >= prev_days * 0.5:
+            p_budget_period = pb.get("total_budget") or 0
+        elif (budget_daily_by_country.get(c, 0) or 0) > 0:
+            # Si tenemos daily actual y no hay histórico anterior, no extrapolamos (queda NULL)
+            p_budget_period = 0
+        else:
+            p_budget_period = 0
+        p_ctr = (p_clicks / p_imp * 100) if p_imp else 0
+        p_cpc = (p_cost / p_clicks) if p_clicks else 0
+        p_util = (p_cost / p_budget_period * 100) if p_budget_period > 0 else None
+        p_totals = {
+            "cost": round(p_cost, 2),
+            "clicks": p_clicks,
+            "impressions": p_imp,
+            "ctr": round(p_ctr, 2),
+            "cpc": round(p_cpc, 3),
+            "daily_budget": round(p_daily, 2),
+            "budget_period": round(p_budget_period, 2) if p_budget_period > 0 else None,
+            "utilization_pct": round(p_util, 1) if p_util is not None else None,
+        }
+        totals_previous[c] = p_totals
+        cur_t = totals[c]
+        cur_t["previous"] = p_totals
+        cur_t["deltas"] = {
+            "cost_pct":            _delta_pct(cur_t["cost"], p_totals["cost"]),
+            "clicks_pct":          _delta_pct(cur_t["clicks"], p_totals["clicks"]),
+            "impressions_pct":     _delta_pct(cur_t["impressions"], p_totals["impressions"]),
+            "ctr_pct":             _delta_pct(cur_t["ctr"], p_totals["ctr"]),
+            "cpc_pct":             _delta_pct(cur_t["cpc"], p_totals["cpc"]),
+            "daily_budget_pct":    _delta_pct(cur_t["daily_budget"], p_totals["daily_budget"]),
+            "budget_period_pct":   _delta_pct(cur_t["budget_period"], p_totals["budget_period"]),
+            "utilization_pct_pct": _delta_pct(cur_t["utilization_pct"], p_totals["utilization_pct"]),
+        }
+
     return jsonify({
         "since": since,
         "until": until,
+        "previous_since": prev_since,
+        "previous_until": prev_until,
         "days_in_range": days_in_range,
         "granularity": granularity,
         "periods": [{"key": k, "label": l} for k, l in periods],
