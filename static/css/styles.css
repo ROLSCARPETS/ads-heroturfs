@@ -1119,6 +1119,23 @@ h1, h2, h3 { font-weight: 600; letter-spacing: -0.01em; }
     padding: 16px 20px;
 }
 
+/* === Marca columnas parciales en la vista por periodos === */
+/* Header con la columna parcial: fondo levemente amarillento + asterisco */
+#weekly-table th.col-period.col-partial {
+    background: rgba(245, 158, 11, 0.10);  /* warning naranja muy sutil */
+}
+#weekly-table th.col-period.col-partial .partial-star {
+    color: var(--warning);
+    font-weight: 700;
+    margin-left: 2px;
+}
+/* Celdas de la columna parcial: texto un poco atenuado para senalar
+   que el dato no es comparable con un bucket completo. */
+#weekly-table td.col-period.col-partial {
+    background: rgba(245, 158, 11, 0.04);
+    color: var(--text-muted);
+}
+
 /* === Drill-down por pais en la vista por periodos del Resumen === */
 #weekly-table tr.weekly-drill-row {
     cursor: pointer;

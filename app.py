@@ -1406,7 +1406,7 @@ def api_weekly():
         "until": until,
         "country": country,
         "granularity": granularity,
-        "periods": [{"key": k, "label": l} for k, l in periods],
+        "periods": _periods_with_partial_info(since, until, granularity),
         "totals_label": "Acumulado",
         "sections": sections,
     })

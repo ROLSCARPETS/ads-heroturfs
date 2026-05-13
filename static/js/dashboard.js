@@ -1729,11 +1729,24 @@ function buildYearGroups(periods) {
 }
 
 function renderWeekly(payload) {
-    const periods = payload.periods || [];
+    // Cachear payload para poder re-render sin refetch al cambiar el toggle
+    // de "Ocultar parciales".
+    state.weeklyPayload = payload;
+    let periods = payload.periods || [];
     const sections = payload.sections || [];
+
+    // Si el toggle "Ocultar parciales" del Resumen esta activo, filtramos
+    // tambien las columnas parciales de la vista por periodos. Mapeamos los
+    // indices supervivientes para alinear valores.
+    let keepIdx = periods.map((_, i) => i);
+    if (state.resumenHidePartial) {
+        keepIdx = periods.map((p, i) => p.is_partial ? -1 : i).filter(i => i >= 0);
+        periods = keepIdx.map(i => payload.periods[i]);
+    }
     const yearGroups = buildYearGroups(periods);
 
-    // Cabecera doble (ano arriba + periodo abajo)
+    // Cabecera doble (ano arriba + periodo abajo). Las columnas parciales
+    // llevan asterisco + tooltip "Parcial: X/Y dias" y la clase col-partial.
     const thead = $('#weekly-table thead');
     let html = '<tr class="th-year-row">';
     html += `<th class="col-label" rowspan="2">Métrica</th>`;
@@ -1743,7 +1756,10 @@ function renderWeekly(payload) {
     });
     html += '</tr><tr>';
     periods.forEach(p => {
-        html += `<th class="col-period">${escapeHtml(p.label)}</th>`;
+        const partialCls = p.is_partial ? ' col-partial' : '';
+        const partialTitle = p.is_partial ? ` title="Parcial: ${p.days_covered}/${p.days_total} días"` : '';
+        const star = p.is_partial ? ' <span class="partial-star">*</span>' : '';
+        html += `<th class="col-period${partialCls}"${partialTitle}>${escapeHtml(p.label)}${star}</th>`;
     });
     html += '</tr>';
     thead.innerHTML = html;
@@ -1777,8 +1793,11 @@ function renderWeekly(payload) {
             bodyHtml += `<tr class="${cls.join(' ')}"${attrs}>`;
             bodyHtml += `<td class="col-label"${labelTooltip}>${chevron}${escapeHtml(row.label)}${labelExtra}</td>`;
             bodyHtml += `<td class="col-total">${fmtCell(row.total, row.format)}</td>`;
-            row.values.forEach(v => {
-                bodyHtml += `<td class="col-period">${fmtCell(v, row.format)}</td>`;
+            // Filtramos values segun keepIdx (toggle "Ocultar parciales")
+            keepIdx.forEach((origIdx, displayIdx) => {
+                const v = row.values[origIdx];
+                const partialCls = periods[displayIdx].is_partial ? ' col-partial' : '';
+                bodyHtml += `<td class="col-period${partialCls}">${fmtCell(v, row.format)}</td>`;
             });
             bodyHtml += '</tr>';
             // Sub-filas por pais (si la fila esta expandida en state)
@@ -1787,8 +1806,10 @@ function renderWeekly(payload) {
                     bodyHtml += `<tr class="weekly-subrow" data-weekly-parent="${rowId}">`;
                     bodyHtml += `<td class="col-label weekly-subrow-label">${flagImg(bc.label)}${escapeHtml(bc.label)}</td>`;
                     bodyHtml += `<td class="col-total">${fmtCell(bc.total, row.format)}</td>`;
-                    bc.values.forEach(v => {
-                        bodyHtml += `<td class="col-period">${fmtCell(v, row.format)}</td>`;
+                    keepIdx.forEach((origIdx, displayIdx) => {
+                        const v = bc.values[origIdx];
+                        const partialCls = periods[displayIdx].is_partial ? ' col-partial' : '';
+                        bodyHtml += `<td class="col-period${partialCls}">${fmtCell(v, row.format)}</td>`;
                     });
                     bodyHtml += '</tr>';
                 });
@@ -2220,7 +2241,7 @@ function init() {
         });
     });
 
-    // Toggle "Ocultar parciales" del Resumen
+    // Toggle "Ocultar parciales" del Resumen (afecta charts top + vista por periodos)
     const hidePartialCb = document.getElementById('resumen-hide-partial');
     if (hidePartialCb) {
         hidePartialCb.checked = state.resumenHidePartial;
@@ -2229,6 +2250,7 @@ function init() {
             try { localStorage.setItem('resumen-hide-partial', hidePartialCb.checked ? '1' : '0'); } catch (e) {}
             // Re-render sin refetch (los datos no cambian)
             loadResumenComparisonOnly();
+            if (state.weeklyPayload) renderWeekly(state.weeklyPayload);
         });
     }
 
