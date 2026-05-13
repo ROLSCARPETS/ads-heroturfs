@@ -726,6 +726,51 @@ h1, h2, h3 { font-weight: 600; letter-spacing: -0.01em; }
     overflow-x: auto;
     max-width: 100%;
     -webkit-overflow-scrolling: touch;
+    position: relative;
+    scroll-behavior: smooth;
+}
+
+/* Botones de scroll horizontal a izquierda y derecha */
+.scroll-controls {
+    display: flex;
+    justify-content: flex-end;
+    gap: 6px;
+    padding: 6px 12px 0;
+    background: var(--surface);
+}
+.scroll-btn {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    width: 32px;
+    height: 28px;
+    cursor: pointer;
+    color: var(--text);
+    font-size: 14px;
+    line-height: 1;
+    transition: all 0.15s;
+    font-family: inherit;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+.scroll-btn:hover { background: var(--accent); color: #fff; border-color: var(--accent); }
+.scroll-btn:disabled { opacity: 0.35; cursor: not-allowed; background: var(--bg); color: var(--text-muted); }
+.scroll-btn:disabled:hover { background: var(--bg); color: var(--text-muted); border-color: var(--border); }
+
+/* Fila de año en cabecera doble */
+#weekly-table thead th.col-year,
+#shopping-detail-table thead th.col-year {
+    background: linear-gradient(to bottom, var(--bg), var(--surface));
+    color: var(--text);
+    font-size: 11px;
+    font-weight: 700;
+    text-align: center;
+    border-bottom: 1px solid var(--border);
+    border-left: 1px solid var(--border);
+    letter-spacing: 0;
+    padding: 6px 8px;
+    text-transform: none;
 }
 #weekly-table {
     width: max-content;

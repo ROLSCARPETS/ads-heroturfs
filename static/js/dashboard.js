@@ -830,11 +830,16 @@ function renderShoppingDetailTable(payload) {
         info.textContent = `${visibleCountries.length} países visibles · ${periods.length} ${granLabel}`;
     }
 
-    // Cabecera
+    // Cabecera doble (ano arriba + periodo abajo)
+    const yearGroups = buildYearGroups(periods);
     const thead = table.querySelector('thead');
-    let h = '<tr>';
-    h += `<th class="col-label">Métrica / País</th>`;
-    h += `<th class="col-total">Acumulado</th>`;
+    let h = '<tr class="th-year-row">';
+    h += `<th class="col-label" rowspan="2">Métrica / País</th>`;
+    h += `<th class="col-total" rowspan="2">Acumulado</th>`;
+    yearGroups.forEach(g => {
+        h += `<th class="col-year" colspan="${g.colspan}">${escapeHtml(g.year)}</th>`;
+    });
+    h += '</tr><tr>';
     periods.forEach(p => { h += `<th class="col-period">${escapeHtml(p.label)}</th>`; });
     h += '</tr>';
     thead.innerHTML = h;
@@ -857,6 +862,39 @@ function renderShoppingDetailTable(payload) {
         });
     });
     tbody.innerHTML = body;
+    setTimeout(() => {
+        const wrap = document.getElementById('shopping-detail-wrapper');
+        if (wrap) wrap.dispatchEvent(new Event('scroll'));
+    }, 30);
+}
+
+function setupScrollControls() {
+    // Botones flecha (← →) sobre cada tabla con scroll horizontal.
+    // Hacen scroll por la mitad del viewport visible.
+    document.querySelectorAll('.scroll-btn[data-scroll-target]').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const wrapper = document.getElementById(btn.dataset.scrollTarget);
+            if (!wrapper) return;
+            const dir = parseInt(btn.dataset.scrollDir, 10) || 1;
+            const delta = wrapper.clientWidth * 0.7 * dir;
+            wrapper.scrollLeft += delta;
+        });
+    });
+    // Activar/desactivar botones según posición de scroll
+    const updateScrollState = (wrapper) => {
+        const wrapperId = wrapper.id;
+        const maxScroll = wrapper.scrollWidth - wrapper.clientWidth;
+        const leftBtn = document.querySelector(`.scroll-btn[data-scroll-target="${wrapperId}"][data-scroll-dir="-1"]`);
+        const rightBtn = document.querySelector(`.scroll-btn[data-scroll-target="${wrapperId}"][data-scroll-dir="1"]`);
+        if (leftBtn) leftBtn.disabled = wrapper.scrollLeft <= 2;
+        if (rightBtn) rightBtn.disabled = wrapper.scrollLeft >= maxScroll - 2;
+    };
+    document.querySelectorAll('.weekly-table-wrapper[id]').forEach(wrapper => {
+        wrapper.addEventListener('scroll', () => updateScrollState(wrapper), { passive: true });
+        // Estado inicial (un poco tras render) y al resize
+        setTimeout(() => updateScrollState(wrapper), 100);
+        window.addEventListener('resize', () => updateScrollState(wrapper));
+    });
 }
 
 function setupShoppingTableSort() {
@@ -1069,15 +1107,33 @@ function fmtCell(value, format) {
     return fmtInt.format(value);
 }
 
+function buildYearGroups(periods) {
+    // Devuelve [{year, colspan}, ...] agrupando consecutivos del mismo ano.
+    const groups = [];
+    let cur = null;
+    periods.forEach(p => {
+        const year = (p.key || '').substring(0, 4);
+        if (cur && cur.year === year) cur.colspan += 1;
+        else { if (cur) groups.push(cur); cur = { year, colspan: 1 }; }
+    });
+    if (cur) groups.push(cur);
+    return groups;
+}
+
 function renderWeekly(payload) {
     const periods = payload.periods || [];
     const sections = payload.sections || [];
+    const yearGroups = buildYearGroups(periods);
 
-    // Cabecera
+    // Cabecera doble (ano arriba + periodo abajo)
     const thead = $('#weekly-table thead');
-    let html = '<tr>';
-    html += `<th class="col-label">Métrica</th>`;
-    html += `<th class="col-total">${escapeHtml(payload.totals_label || 'Acumulado')}</th>`;
+    let html = '<tr class="th-year-row">';
+    html += `<th class="col-label" rowspan="2">Métrica</th>`;
+    html += `<th class="col-total" rowspan="2">${escapeHtml(payload.totals_label || 'Acumulado')}</th>`;
+    yearGroups.forEach(g => {
+        html += `<th class="col-year" colspan="${g.colspan}">${escapeHtml(g.year)}</th>`;
+    });
+    html += '</tr><tr>';
     periods.forEach(p => {
         html += `<th class="col-period">${escapeHtml(p.label)}</th>`;
     });
@@ -1107,6 +1163,11 @@ function renderWeekly(payload) {
         });
     });
     tbody.innerHTML = bodyHtml;
+    // Refresca estado de botones de scroll tras inyectar contenido
+    setTimeout(() => {
+        const wrap = document.getElementById('weekly-wrapper');
+        if (wrap) wrap.dispatchEvent(new Event('scroll'));
+    }, 30);
 
     // Info
     $('#weekly-info').textContent = `${periods.length} ${payload.granularity === 'monthly' ? 'meses' : payload.granularity === 'weekly' ? 'semanas' : 'días'} - ${payload.since} a ${payload.until}${payload.country ? ' - ' + payload.country : ''}`;
@@ -1489,6 +1550,7 @@ function init() {
 
     setupTableSort();
     setupShoppingTableSort();
+    setupScrollControls();
     setupTabs();
     setupChatbot();
     loadCountrySelector();

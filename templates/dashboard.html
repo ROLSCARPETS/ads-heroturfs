@@ -299,7 +299,11 @@
                     <button class="wgran-btn" data-wgran="monthly">Mes</button>
                 </div>
             </div>
-            <div class="weekly-table-wrapper">
+            <div class="scroll-controls">
+                <button type="button" class="scroll-btn" data-scroll-target="weekly-wrapper" data-scroll-dir="-1" title="Desplazar a la izquierda">&#9664;</button>
+                <button type="button" class="scroll-btn" data-scroll-target="weekly-wrapper" data-scroll-dir="1" title="Desplazar a la derecha">&#9654;</button>
+            </div>
+            <div class="weekly-table-wrapper" id="weekly-wrapper">
                 <table id="weekly-table">
                     <thead></thead>
                     <tbody></tbody>
@@ -356,7 +360,11 @@
                     <span id="shopping-detail-info" class="weekly-info">-</span>
                     <span class="shopping-detail-hint">Respeta los chips de pa&iacute;ses y la granularidad de arriba</span>
                 </div>
-                <div class="weekly-table-wrapper">
+                <div class="scroll-controls">
+                    <button type="button" class="scroll-btn" data-scroll-target="shopping-detail-wrapper" data-scroll-dir="-1" title="Desplazar a la izquierda">&#9664;</button>
+                    <button type="button" class="scroll-btn" data-scroll-target="shopping-detail-wrapper" data-scroll-dir="1" title="Desplazar a la derecha">&#9654;</button>
+                </div>
+                <div class="weekly-table-wrapper" id="shopping-detail-wrapper">
                     <table id="shopping-detail-table" class="shopping-detail-table">
                         <thead></thead>
                         <tbody></tbody>
