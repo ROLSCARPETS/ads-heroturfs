@@ -1635,24 +1635,36 @@ def api_meta_country_comparison():
 
         # Presupuesto diario actual por pais.
         # Meta tiene dos modos: CBO (budget en la campaña) y ABO (budget en
-        # cada ad set). Calculamos por campaña: si campaign.daily_budget > 0
-        # usamos eso (CBO); si no, sumamos los daily_budget de sus ad sets
-        # ACTIVE (ABO). Todo en centavos -> dividir entre 100.
+        # cada ad set). Logica:
+        #   - Si la campana tiene ad sets ACTIVE con daily_budget > 0
+        #     -> sumamos solo esos (ABO real). Ignoramos cualquier daily_budget
+        #        a nivel campana porque seria residual.
+        #   - Si tiene ad sets ACTIVE pero ninguno con daily_budget propio
+        #     -> usamos campaigns.daily_budget (CBO real).
+        #   - Si la campana no tiene ningun ad set ACTIVE
+        #     -> 0 (no esta entregando nada aunque haya budget residual).
+        # Todo en centavos -> dividir entre 100 al final.
         budget_rows = conn.execute(
             """
+            WITH adsets_summary AS (
+                SELECT campaign_id,
+                       COUNT(*) total_active,
+                       SUM(CASE WHEN daily_budget > 0 THEN daily_budget ELSE 0 END) sum_with_budget,
+                       COUNT(CASE WHEN daily_budget > 0 THEN 1 END) count_with_budget
+                FROM meta_ad_sets
+                WHERE effective_status = 'ACTIVE'
+                GROUP BY campaign_id
+            )
             SELECT c.country country,
                    SUM(
                      CASE
-                       WHEN c.daily_budget IS NOT NULL AND c.daily_budget > 0 THEN c.daily_budget
-                       ELSE COALESCE(
-                         (SELECT SUM(ads.daily_budget)
-                          FROM meta_ad_sets ads
-                          WHERE ads.campaign_id = c.id
-                            AND ads.effective_status = 'ACTIVE'
-                            AND ads.daily_budget IS NOT NULL), 0)
+                       WHEN COALESCE(s.count_with_budget, 0) > 0 THEN s.sum_with_budget
+                       WHEN COALESCE(s.total_active, 0) > 0 THEN COALESCE(c.daily_budget, 0)
+                       ELSE 0
                      END
                    ) / 100.0 daily_total
             FROM campaigns c
+            LEFT JOIN adsets_summary s ON s.campaign_id = c.id
             WHERE c.effective_status = 'ACTIVE'
             GROUP BY c.country
             """,
