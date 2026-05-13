@@ -222,6 +222,79 @@ def build_budget_timeline(current_budgets, events, days_back=90):
     return timeline
 
 
+def fetch_ad_groups(client, channel_type="SEARCH"):
+    """Lista de ad groups (no eliminados) que pertenecen a campañas del canal
+    indicado. Por defecto SEARCH porque es el unico que usa la estructura
+    ad_group -> ad clasica (Shopping/PMax usan product_groups/asset_groups).
+    """
+    service = client.get_service("GoogleAdsService")
+    query = f"""
+        SELECT
+            ad_group.id,
+            ad_group.name,
+            ad_group.status,
+            ad_group.type,
+            campaign.id,
+            campaign.advertising_channel_type
+        FROM ad_group
+        WHERE ad_group.status != 'REMOVED'
+          AND campaign.advertising_channel_type = '{channel_type}'
+        ORDER BY campaign.id, ad_group.id
+    """
+    response = service.search(customer_id=CUSTOMER_ID, query=query)
+    out = []
+    for row in response:
+        out.append({
+            "id": str(row.ad_group.id),
+            "campaign_id": str(row.campaign.id),
+            "name": row.ad_group.name,
+            "status": row.ad_group.status.name,
+            "type": row.ad_group.type_.name,
+        })
+    return out
+
+
+def fetch_ad_group_insights(client, since, until, channel_type="SEARCH"):
+    """Insights diarios por ad group entre `since` y `until` (objetos date).
+    Filtra por canal en la propia query para evitar traer Shopping/PMax."""
+    service = client.get_service("GoogleAdsService")
+    query = f"""
+        SELECT
+            ad_group.id,
+            campaign.id,
+            segments.date,
+            metrics.impressions,
+            metrics.clicks,
+            metrics.cost_micros,
+            metrics.conversions,
+            metrics.conversions_value,
+            metrics.ctr,
+            metrics.average_cpc
+        FROM ad_group
+        WHERE segments.date BETWEEN '{since.isoformat()}' AND '{until.isoformat()}'
+          AND ad_group.status != 'REMOVED'
+          AND campaign.advertising_channel_type = '{channel_type}'
+        ORDER BY segments.date, campaign.id, ad_group.id
+    """
+    response = service.search(customer_id=CUSTOMER_ID, query=query)
+    out = []
+    for r in response:
+        m = r.metrics
+        out.append({
+            "ad_group_id": str(r.ad_group.id),
+            "campaign_id": str(r.campaign.id),
+            "date": r.segments.date,
+            "impressions": int(m.impressions),
+            "clicks": int(m.clicks),
+            "cost": (m.cost_micros or 0) / 1_000_000,
+            "conversions": float(m.conversions),
+            "conversion_value": float(m.conversions_value),
+            "ctr": float(m.ctr) * 100,
+            "cpc": (m.average_cpc or 0) / 1_000_000,
+        })
+    return out
+
+
 def fetch_insights(client, since, until):
     """Insights diarios por campana entre `since` y `until` (objetos date).
 
@@ -311,7 +384,7 @@ def sync(since=None, until=None):
                 db.upsert_google_budget_history(conn, cid, day, budget, source)
         print(f"      Timeline guardada: {len(timeline)} (campana, dia) entries")
 
-        print("[3/3] Trayendo insights diarios...")
+        print("[3/4] Trayendo insights diarios...")
         insights = fetch_insights(client, since, until)
         print(f"      {len(insights)} filas de insights")
         with db.get_conn() as conn:
@@ -319,9 +392,31 @@ def sync(since=None, until=None):
                 db.upsert_google_insight(conn, row)
                 insights_count += 1
 
+        # Ad groups (solo SEARCH) + insights por ad group para drill-down.
+        # Si la API falla (permisos limitados), continuamos sin romper el sync.
+        ad_groups_count = 0
+        ag_insights_count = 0
+        try:
+            print("[4/4] Trayendo ad groups y sus insights (solo SEARCH)...")
+            ad_groups = fetch_ad_groups(client, channel_type="SEARCH")
+            print(f"      {len(ad_groups)} ad groups SEARCH")
+            with db.get_conn() as conn:
+                for ag in ad_groups:
+                    db.upsert_google_ad_group(conn, ag)
+                    ad_groups_count += 1
+            ag_insights = fetch_ad_group_insights(client, since, until, channel_type="SEARCH")
+            print(f"      {len(ag_insights)} filas de ad group insights")
+            with db.get_conn() as conn:
+                for row in ag_insights:
+                    db.upsert_google_ad_group_insight(conn, row)
+                    ag_insights_count += 1
+        except Exception as e:
+            print(f"      [WARN] Error sincronizando ad groups (continuo): {e}")
+
         with db.get_conn() as conn:
             db.log_google_sync_finish(conn, sync_id, campaigns_count, insights_count, "ok")
-        print(f"\n[OK] Sync Google Ads completo: {campaigns_count} campanas, {insights_count} insights, {len(timeline)} entradas budget history")
+        print(f"\n[OK] Sync Google Ads completo: {campaigns_count} campanas, {insights_count} insights, "
+              f"{len(timeline)} entradas budget history, {ad_groups_count} ad groups, {ag_insights_count} ad group insights")
 
     except Exception as e:
         msg = str(e)

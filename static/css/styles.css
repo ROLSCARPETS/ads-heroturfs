@@ -1070,6 +1070,89 @@ h1, h2, h3 { font-weight: 600; letter-spacing: -0.01em; }
     padding: 16px 20px;
 }
 
+/* === Drill-down de Search a nivel ad group === */
+/* Filas de la tabla totales que pinchan para expandir ad groups */
+tr.drill-row {
+    cursor: pointer;
+    transition: background 0.15s;
+}
+tr.drill-row:hover {
+    background: linear-gradient(to right, rgba(0, 94, 148, 0.05), transparent);
+}
+.drill-chevron {
+    display: inline-block;
+    margin-right: 6px;
+    color: var(--text-muted);
+    font-size: 10px;
+    transition: transform 0.2s;
+}
+.drill-chevron.open {
+    transform: rotate(90deg);
+    color: var(--accent);
+}
+/* Sub-filas que cuelgan del pais expandido (usan colspan total con grid interno) */
+tr.drill-subrow {
+    background: var(--bg);
+}
+tr.drill-subrow > td {
+    padding: 0 !important;
+    border-bottom: 1px solid var(--border);
+}
+tr.drill-subhead > td {
+    background: rgba(50, 63, 73, 0.04);
+    font-weight: 600;
+}
+.drill-subhead-grid,
+.drill-subrow-grid {
+    display: grid;
+    grid-template-columns: minmax(280px, 2.4fr) repeat(7, minmax(80px, 1fr));
+    gap: 12px;
+    padding: 8px 16px 8px 48px;  /* sangrado a la izquierda para indicar jerarquia */
+    align-items: center;
+    font-size: 12px;
+}
+.drill-subhead-label {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-muted);
+}
+.drill-subhead-num {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-muted);
+    text-align: right;
+}
+.drill-subrow-label {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;  /* permite que text-overflow funcione dentro de grid */
+}
+.drill-ag-name {
+    font-weight: 500;
+    color: var(--text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.drill-camp-name {
+    font-size: 11px;
+    color: var(--text-muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.drill-subrow-num {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    color: var(--text);
+}
+.drill-subrow-grid.drill-paused {
+    opacity: 0.55;
+}
+
 /* Tabla tipo Excel de la pestaña Shopping (similar a #weekly-table pero independiente) */
 .shopping-detail-table-section {
     border-top: 1px solid var(--border);

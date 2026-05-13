@@ -1606,6 +1606,73 @@ def api_google_search_comparison():
     return _google_channel_comparison("SEARCH")
 
 
+@app.route("/api/google/search-ad-groups")
+def api_google_search_ad_groups():
+    """Drill-down de campañas SEARCH a nivel de ad group, agregado al rango
+    actual y filtrable por pais. Devuelve una lista de ad groups con sus
+    metricas para que el frontend las pinche y vea cuales rinden mejor.
+    """
+    since, until, _days = _range_from_request()
+    country = request.args.get("country") or None
+
+    sql = """
+        SELECT ag.id ad_group_id,
+               ag.name ad_group_name,
+               ag.status ad_group_status,
+               c.id campaign_id,
+               c.name campaign_name,
+               c.country country,
+               SUM(i.cost) cost,
+               SUM(i.clicks) clicks,
+               SUM(i.impressions) impressions,
+               SUM(i.conversions) conversions,
+               SUM(i.conversion_value) revenue
+        FROM google_ad_group_insights_daily i
+        JOIN google_ad_groups ag ON ag.id = i.ad_group_id
+        JOIN google_campaigns c   ON c.id = ag.campaign_id
+        WHERE c.advertising_channel_type = 'SEARCH'
+          AND i.date BETWEEN ? AND ?
+    """
+    params = [since, until]
+    if country:
+        sql += " AND c.country = ?"
+        params.append(country)
+    sql += " GROUP BY ag.id, c.id ORDER BY cost DESC"
+
+    with _get_conn() as conn:
+        rows = conn.execute(sql, params).fetchall()
+
+    out = []
+    for r in rows:
+        cost = r["cost"] or 0
+        clicks = r["clicks"] or 0
+        imp = r["impressions"] or 0
+        conv = r["conversions"] or 0
+        rev = r["revenue"] or 0
+        out.append({
+            "ad_group_id": r["ad_group_id"],
+            "ad_group_name": r["ad_group_name"],
+            "ad_group_status": r["ad_group_status"],
+            "campaign_id": r["campaign_id"],
+            "campaign_name": r["campaign_name"],
+            "country": r["country"],
+            "cost": round(cost, 2),
+            "clicks": int(clicks),
+            "impressions": int(imp),
+            "ctr": round((clicks / imp * 100) if imp else 0, 2),
+            "cpc": round((cost / clicks) if clicks else 0, 2),
+            "conversions": round(conv, 2),
+            "revenue": round(rev, 2),
+            "roas": round((rev / cost) if cost else 0, 2),
+        })
+    return jsonify({
+        "since": since,
+        "until": until,
+        "country": country,
+        "ad_groups": out,
+    })
+
+
 @app.route("/api/google/sync", methods=["POST"])
 def api_google_sync():
     """Lanza sync de Google Ads. Devuelve error si falta Developer Token."""

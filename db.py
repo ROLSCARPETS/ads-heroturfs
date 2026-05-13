@@ -206,6 +206,34 @@ CREATE TABLE IF NOT EXISTS google_budget_history (
     PRIMARY KEY (campaign_id, date)
 );
 CREATE INDEX IF NOT EXISTS idx_g_budget_hist_date ON google_budget_history(date);
+
+-- Grupos de anuncios. Solo sincronizamos los que pertenecen a campañas SEARCH
+-- (para Shopping/PMax la estructura es product_groups, fuera de scope ahora).
+CREATE TABLE IF NOT EXISTS google_ad_groups (
+    id              TEXT PRIMARY KEY,
+    campaign_id     TEXT NOT NULL,
+    name            TEXT,
+    status          TEXT,
+    type            TEXT,             -- SEARCH_STANDARD, SEARCH_DYNAMIC_ADS, ...
+    updated_at      TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_g_ad_groups_campaign ON google_ad_groups(campaign_id);
+
+CREATE TABLE IF NOT EXISTS google_ad_group_insights_daily (
+    ad_group_id      TEXT NOT NULL,
+    campaign_id      TEXT NOT NULL,
+    date             TEXT NOT NULL,
+    impressions      INTEGER,
+    clicks           INTEGER,
+    cost             REAL,            -- EUR (ya convertido desde cost_micros)
+    conversions      REAL,
+    conversion_value REAL,            -- EUR
+    ctr              REAL,            -- %
+    cpc              REAL,            -- EUR
+    PRIMARY KEY (ad_group_id, date)
+);
+CREATE INDEX IF NOT EXISTS idx_g_agi_date ON google_ad_group_insights_daily(date);
+CREATE INDEX IF NOT EXISTS idx_g_agi_campaign ON google_ad_group_insights_daily(campaign_id);
 """
 
 
@@ -569,6 +597,56 @@ def upsert_google_insight(conn, row):
             _to_float(row.get("ctr")),
             _to_float(row.get("cpc")),
             _to_float(row.get("cpm")),
+        ),
+    )
+
+
+def upsert_google_ad_group(conn, ag):
+    """ag: dict con id, campaign_id, name, status, type"""
+    conn.execute(
+        """
+        INSERT INTO google_ad_groups (id, campaign_id, name, status, type, updated_at)
+        VALUES (?, ?, ?, ?, ?, datetime('now'))
+        ON CONFLICT(id) DO UPDATE SET
+            campaign_id = excluded.campaign_id,
+            name = excluded.name,
+            status = excluded.status,
+            type = excluded.type,
+            updated_at = datetime('now')
+        """,
+        (ag.get("id"), ag.get("campaign_id"), ag.get("name"),
+         ag.get("status"), ag.get("type")),
+    )
+
+
+def upsert_google_ad_group_insight(conn, row):
+    """row: dict con ad_group_id, campaign_id, date, impressions, clicks,
+    cost, conversions, conversion_value, ctr, cpc"""
+    conn.execute(
+        """
+        INSERT INTO google_ad_group_insights_daily
+            (ad_group_id, campaign_id, date, impressions, clicks,
+             cost, conversions, conversion_value, ctr, cpc)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(ad_group_id, date) DO UPDATE SET
+            campaign_id = excluded.campaign_id,
+            impressions = excluded.impressions,
+            clicks = excluded.clicks,
+            cost = excluded.cost,
+            conversions = excluded.conversions,
+            conversion_value = excluded.conversion_value,
+            ctr = excluded.ctr,
+            cpc = excluded.cpc
+        """,
+        (
+            row["ad_group_id"], row["campaign_id"], row["date"],
+            _to_int(row.get("impressions")),
+            _to_int(row.get("clicks")),
+            _to_float(row.get("cost")),
+            _to_float(row.get("conversions")),
+            _to_float(row.get("conversion_value")),
+            _to_float(row.get("ctr")),
+            _to_float(row.get("cpc")),
         ),
     )
 

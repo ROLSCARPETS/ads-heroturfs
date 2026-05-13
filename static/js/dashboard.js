@@ -21,6 +21,9 @@ const state = {
     searchPayload: null,
     searchSortBy: 'cost',
     searchSortDir: 'desc',
+    // Drill-down de Search por ad group (cache por pais + paises expandidos)
+    searchAdGroupsByCountry: {},
+    searchExpandedCountries: new Set(),
     alertsPayload: null,      // cache del ultimo payload de alertas para refiltrar por tab
     activeTab: 'resumen',     // pestana activa: resumen | shopping | search | hubspot
 };
@@ -125,6 +128,7 @@ const fetchWeekly = ()     => fetchJson(`/api/weekly?${buildQuery({granularity: 
 const fetchAlerts = ()     => fetchJson(`/api/alerts${state.country ? '?country=' + encodeURIComponent(state.country) : ''}`);
 const fetchShoppingComparison = () => fetchJson(`/api/google/shopping-comparison?${buildQuery({granularity: state.shoppingGranularity})}`);
 const fetchSearchComparison   = () => fetchJson(`/api/google/search-comparison?${buildQuery({granularity: state.searchGranularity})}`);
+const fetchSearchAdGroups     = (country) => fetchJson(`/api/google/search-ad-groups?${buildQuery({country: country || ''})}`);
 
 // Google Ads APIs
 const fetchGoogleKpis = ()      => fetchJson(`/api/google/kpis?${buildQuery()}`);
@@ -188,7 +192,7 @@ function renderKpis(k) {
     $('#kpi-reach').textContent = fmtInt.format(k.reach);
     $('#kpi-clicks').textContent = fmtInt.format(k.clicks);
     $('#kpi-ctr').textContent = k.ctr.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-    $('#kpi-cpc').textContent = fmtEur3.format(k.cpc);
+    $('#kpi-cpc').textContent = fmtEur.format(k.cpc);
     $('#kpi-leads').textContent = fmtInt.format(k.leads);
     $('#kpi-cpl').textContent = k.leads > 0 ? fmtEur.format(k.cpl) : '-';
 
@@ -484,7 +488,7 @@ function renderTable() {
             <td class="td-num">${fmtInt.format(c.impressions)}</td>
             <td class="td-num">${fmtInt.format(c.clicks)}</td>
             <td class="td-num">${fmtPct(c.ctr)}</td>
-            <td class="td-num">${c.clicks > 0 ? fmtEur3.format(c.cpc) : '-'}</td>
+            <td class="td-num">${c.clicks > 0 ? fmtEur.format(c.cpc) : '-'}</td>
             <td class="td-num">${fmtInt.format(c.leads)}</td>
             <td class="td-num">${c.leads > 0 ? fmtEur.format(c.cpl) : '-'}</td>
         </tr>
@@ -507,7 +511,7 @@ function renderTable() {
             <td class="td-num">${fmtInt.format(tot.impressions)}</td>
             <td class="td-num">${fmtInt.format(tot.clicks)}</td>
             <td class="td-num">${fmtPct(totCtr)}</td>
-            <td class="td-num">${tot.clicks > 0 ? fmtEur3.format(totCpc) : '-'}</td>
+            <td class="td-num">${tot.clicks > 0 ? fmtEur.format(totCpc) : '-'}</td>
             <td class="td-num">${fmtInt.format(tot.leads)}</td>
             <td class="td-num">${tot.leads > 0 ? fmtEur.format(totCpl) : '-'}</td>
         </tr>
@@ -575,6 +579,9 @@ function csvCell(v) {
 
 // === Carga principal ===
 async function loadAll() {
+    // Reset de caches dependientes de filtros (rango/pais)
+    state.searchAdGroupsByCountry = {};
+    state.searchExpandedCountries = new Set();
     try {
         const [k, ts, cs, hsK, hsF, hsSrc, hsSt, hsCo, wk, gK, gCs, al, sh, sr] = await Promise.all([
             fetchKpis(), fetchTimeseries(), fetchCampaigns(),
@@ -693,7 +700,7 @@ function renderGoogleKpis(k) {
     $('#g-kpi-impressions').textContent = fmtInt.format(k.impressions);
     $('#g-kpi-clicks').textContent = fmtInt.format(k.clicks);
     $('#g-kpi-ctr').textContent = k.ctr.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-    $('#g-kpi-cpc').textContent = fmtEur3.format(k.cpc);
+    $('#g-kpi-cpc').textContent = fmtEur.format(k.cpc);
     $('#g-kpi-conv').textContent = fmtInt.format(Math.round(k.conversions));
     $('#g-kpi-revenue').textContent = fmtEurBig.format(Math.round(k.revenue));
     $('#g-kpi-roas').textContent = k.roas > 0 ? `${k.roas.toLocaleString('es-ES', {minimumFractionDigits:2, maximumFractionDigits:2})}x` : '-';
@@ -705,7 +712,7 @@ function renderGoogleKpis(k) {
     setDelta('g-delta-impressions', d.impressions_pct, 'impressions', fmtForDelta(p.impressions || 0, 'int'));
     setDelta('g-delta-clicks', d.clicks_pct, 'clicks', fmtForDelta(p.clicks || 0, 'int'));
     setDelta('g-delta-ctr', d.ctr_pct, 'ctr', fmtForDelta(p.ctr || 0, 'pct'));
-    setDelta('g-delta-cpc', d.cpc_pct, 'cpc', fmtForDelta(p.cpc || 0, 'eur3'));
+    setDelta('g-delta-cpc', d.cpc_pct, 'cpc', fmtForDelta(p.cpc || 0, 'eur'));
     setDelta('g-delta-conv', d.conversions_pct, 'conversions', fmtForDelta(p.conversions || 0, 'int'));
     setDelta('g-delta-revenue', d.revenue_pct, 'revenue', fmtForDelta(p.revenue || 0, 'eur'));
     setDelta('g-delta-roas', d.roas_pct, 'roas', fmtForDelta(p.roas || 0, 'x'));
@@ -743,7 +750,7 @@ function renderGoogleCampaigns(rows) {
             <td class="td-num">${fmtInt.format(c.impressions)}</td>
             <td class="td-num">${fmtInt.format(c.clicks)}</td>
             <td class="td-num">${fmtPct(c.ctr)}</td>
-            <td class="td-num">${c.clicks > 0 ? fmtEur3.format(c.cpc) : '-'}</td>
+            <td class="td-num">${c.clicks > 0 ? fmtEur.format(c.cpc) : '-'}</td>
             <td class="td-num">${c.conversions > 0 ? fmtInt.format(Math.round(c.conversions)) : '-'}</td>
             <td class="td-num">${c.revenue > 0 ? fmtEur.format(c.revenue) : '-'}</td>
             <td class="td-num">${c.roas > 0 ? c.roas.toLocaleString('es-ES',{minimumFractionDigits:2,maximumFractionDigits:2})+'x' : '-'}</td>
@@ -766,7 +773,7 @@ function renderGoogleCampaigns(rows) {
             <td class="td-num">${fmtInt.format(tot.impr)}</td>
             <td class="td-num">${fmtInt.format(tot.clicks)}</td>
             <td class="td-num">${fmtPct(totCtr)}</td>
-            <td class="td-num">${tot.clicks > 0 ? fmtEur3.format(totCpc) : '-'}</td>
+            <td class="td-num">${tot.clicks > 0 ? fmtEur.format(totCpc) : '-'}</td>
             <td class="td-num">${fmtInt.format(Math.round(tot.conv))}</td>
             <td class="td-num">${fmtEur.format(tot.rev)}</td>
             <td class="td-num">${totRoas > 0 ? totRoas.toLocaleString('es-ES',{minimumFractionDigits:2,maximumFractionDigits:2})+'x' : '-'}</td>
@@ -792,6 +799,10 @@ async function loadShoppingOnly() {
 
 async function loadSearchOnly() {
     try {
+        // Al recargar Search invalidamos el cache de ad groups: el rango/pais
+        // pudo cambiar y los totales cacheados ya no serian validos.
+        state.searchAdGroupsByCountry = {};
+        state.searchExpandedCountries = new Set();
         renderChannelComparison('search', await fetchSearchComparison());
     } catch (e) {
         toast('Error cargando comparativa Search: ' + e.message, 'error');
@@ -902,7 +913,7 @@ const SHOPPING_DETAIL_METRICS = [
     { key: 'clicks',        title: 'Clicks',          format: 'int',  totalKey: 'clicks' },
     { key: 'impressions',   title: 'Impresiones',     format: 'int',  totalKey: 'impressions' },
     { key: 'ctr',           title: 'CTR',             format: 'pct',  totalKey: 'ctr' },
-    { key: 'cpc',           title: 'CPC',             format: 'eur3', totalKey: 'cpc' },
+    { key: 'cpc',           title: 'CPC',             format: 'eur',  totalKey: 'cpc' },
 ];
 
 function renderChannelDetailTable(kind, payload) {
@@ -1067,6 +1078,132 @@ function renderChannelCountryChips(kind, payload) {
     });
 }
 
+// === Drill-down de Search: ad groups por pais ===
+// Numero de columnas de la tabla de totales de Search (debe coincidir con el thead).
+const SEARCH_TABLE_COLSPAN = 9;
+
+function attachSearchDrillDown(tbody) {
+    tbody.querySelectorAll('tr.drill-row[data-drill-country]').forEach(tr => {
+        tr.addEventListener('click', () => toggleSearchDrillDown(tr));
+        // Re-render expansiones previas si el pais sigue expandido
+        const c = tr.dataset.drillCountry;
+        if (state.searchExpandedCountries.has(c)) {
+            const cached = state.searchAdGroupsByCountry[c];
+            if (cached) insertAdGroupSubRows(tr, c, cached);
+        }
+    });
+}
+
+async function toggleSearchDrillDown(tr) {
+    const c = tr.dataset.drillCountry;
+    const expanded = state.searchExpandedCountries.has(c);
+    const chev = tr.querySelector('.drill-chevron');
+    if (expanded) {
+        // Colapsar: quitar las sub-filas + cerrar el chevron
+        state.searchExpandedCountries.delete(c);
+        if (chev) chev.classList.remove('open');
+        removeAdGroupSubRows(tr);
+        return;
+    }
+    // Expandir: marcar + fetch si no esta en cache + insertar sub-filas
+    state.searchExpandedCountries.add(c);
+    if (chev) chev.classList.add('open');
+    let groups = state.searchAdGroupsByCountry[c];
+    if (!groups) {
+        // Placeholder de carga mientras llega la respuesta
+        insertAdGroupLoading(tr);
+        try {
+            const resp = await fetchSearchAdGroups(c);
+            groups = resp.ad_groups || [];
+            state.searchAdGroupsByCountry[c] = groups;
+        } catch (e) {
+            removeAdGroupSubRows(tr);
+            toast('Error cargando ad groups: ' + e.message, 'error');
+            state.searchExpandedCountries.delete(c);
+            if (chev) chev.classList.remove('open');
+            return;
+        }
+        removeAdGroupSubRows(tr);
+    }
+    insertAdGroupSubRows(tr, c, groups);
+}
+
+function insertAdGroupLoading(tr) {
+    const loadingTr = document.createElement('tr');
+    loadingTr.className = 'drill-subrow drill-subrow-loading';
+    loadingTr.dataset.drillParent = tr.dataset.drillCountry;
+    loadingTr.innerHTML = `<td colspan="${SEARCH_TABLE_COLSPAN}" style="text-align:center;color:#64748b;padding:14px;">Cargando ad groups...</td>`;
+    tr.after(loadingTr);
+}
+
+function removeAdGroupSubRows(tr) {
+    const c = tr.dataset.drillCountry;
+    let next = tr.nextElementSibling;
+    while (next && next.classList && next.classList.contains('drill-subrow') && next.dataset.drillParent === c) {
+        const toRemove = next;
+        next = next.nextElementSibling;
+        toRemove.remove();
+    }
+}
+
+function insertAdGroupSubRows(tr, country, groups) {
+    if (!groups || !groups.length) {
+        const emptyTr = document.createElement('tr');
+        emptyTr.className = 'drill-subrow drill-subrow-empty';
+        emptyTr.dataset.drillParent = country;
+        emptyTr.innerHTML = `<td colspan="${SEARCH_TABLE_COLSPAN}" style="text-align:center;color:#64748b;padding:14px;">No hay ad groups con datos en este periodo. (Ejecuta sync de Google Ads para poblar la tabla.)</td>`;
+        tr.after(emptyTr);
+        return;
+    }
+    // Header de sub-tabla
+    const headerTr = document.createElement('tr');
+    headerTr.className = 'drill-subrow drill-subhead';
+    headerTr.dataset.drillParent = country;
+    headerTr.innerHTML = `
+        <td colspan="${SEARCH_TABLE_COLSPAN}">
+            <div class="drill-subhead-grid">
+                <span class="drill-subhead-label">Ad group / Campaña</span>
+                <span class="drill-subhead-num">Coste</span>
+                <span class="drill-subhead-num">Clicks</span>
+                <span class="drill-subhead-num">Impr.</span>
+                <span class="drill-subhead-num">CTR</span>
+                <span class="drill-subhead-num">CPC</span>
+                <span class="drill-subhead-num">Conv.</span>
+                <span class="drill-subhead-num">ROAS</span>
+            </div>
+        </td>
+    `;
+    tr.after(headerTr);
+
+    // Sub-filas con datos (orden ya viene por coste desc del backend)
+    let prev = headerTr;
+    groups.forEach(g => {
+        const subTr = document.createElement('tr');
+        subTr.className = 'drill-subrow';
+        subTr.dataset.drillParent = country;
+        const statusCls = g.ad_group_status === 'ENABLED' ? '' : 'drill-paused';
+        subTr.innerHTML = `
+            <td colspan="${SEARCH_TABLE_COLSPAN}">
+                <div class="drill-subrow-grid ${statusCls}">
+                    <div class="drill-subrow-label">
+                        <span class="drill-ag-name" title="${escapeHtml(g.ad_group_name || '')}">${escapeHtml(g.ad_group_name || '(sin nombre)')}</span>
+                        <span class="drill-camp-name" title="${escapeHtml(g.campaign_name || '')}">${escapeHtml(g.campaign_name || '')}</span>
+                    </div>
+                    <span class="drill-subrow-num">${fmtEur.format(g.cost)} €</span>
+                    <span class="drill-subrow-num">${fmtInt.format(g.clicks)}</span>
+                    <span class="drill-subrow-num">${fmtInt.format(g.impressions)}</span>
+                    <span class="drill-subrow-num">${(g.ctr || 0).toLocaleString('es-ES', { maximumFractionDigits: 2 })}%</span>
+                    <span class="drill-subrow-num">${g.clicks > 0 ? fmtEur.format(g.cpc) + ' €' : '-'}</span>
+                    <span class="drill-subrow-num">${g.conversions > 0 ? fmtInt.format(Math.round(g.conversions)) : '-'}</span>
+                    <span class="drill-subrow-num">${g.roas > 0 ? g.roas.toLocaleString('es-ES', {minimumFractionDigits:2, maximumFractionDigits:2})+'x' : '-'}</span>
+                </div>
+            </td>
+        `;
+        prev.after(subTr);
+        prev = subTr;
+    });
+}
+
 function renderChannelComparison(kind, payload, skipChipsRebuild = false) {
     if (!payload || !payload.countries) return;
     const cfg = channelCfg(kind);
@@ -1095,7 +1232,7 @@ function renderChannelComparison(kind, payload, skipChipsRebuild = false) {
     if (charts.ctr)  charts.ctr.destroy();
 
     const fmtEurFn = (v) => fmtEur.format(v || 0) + ' €';
-    const fmtCpcFn = (v) => fmtEur3.format(v || 0) + ' €';
+    const fmtCpcFn = (v) => fmtEur.format(v || 0) + ' €';
     const fmtCtrFn = (v) => (v || 0).toLocaleString('es-ES', { maximumFractionDigits: 2 }) + '%';
 
     charts.cost = buildChannelChart(kind, cfg.ids.chartCost, payload, 'cost', 'EUR', fmtEurFn, 'bar');
@@ -1155,9 +1292,15 @@ function renderChannelComparison(kind, payload, skipChipsRebuild = false) {
         const budgetDay = t.daily_budget > 0 ? fmtEur.format(t.daily_budget) + ' €' : '<span class="empty">-</span>';
         const budgetPer = t.budget_period ? fmtEur.format(t.budget_period) + ' €' : '<span class="empty">-</span>';
         const d = t.deltas || {};
+        // En Search: la fila es clickable y muestra un chevron para drill-down a ad groups
+        const isSearch = kind === 'search';
+        const expanded = isSearch && state.searchExpandedCountries.has(c);
+        const chevron = isSearch ? `<span class="drill-chevron ${expanded ? 'open' : ''}">&#9656;</span>` : '';
+        const rowCls = isSearch ? 'drill-row' : '';
+        const rowAttrs = isSearch ? ` data-drill-country="${escapeHtml(c)}"` : '';
         return `
-            <tr>
-                <td>${flagImg(c)}<span style="color:${colorForCountry(c)};font-weight:600;">●</span> ${escapeHtml(c)}</td>
+            <tr class="${rowCls}"${rowAttrs}>
+                <td>${chevron}${flagImg(c)}<span style="color:${colorForCountry(c)};font-weight:600;">●</span> ${escapeHtml(c)}</td>
                 <td class="td-num">${budgetDay}${deltaTag(d.daily_budget_pct, 'neutral')}</td>
                 <td class="td-num">${fmtEur.format(t.cost)} €${deltaTag(d.cost_pct, 'neutral')}</td>
                 <td class="td-num">${budgetPer}${deltaTag(d.budget_period_pct, 'neutral')}</td>
@@ -1165,10 +1308,15 @@ function renderChannelComparison(kind, payload, skipChipsRebuild = false) {
                 <td class="td-num">${fmtInt.format(t.clicks)}${deltaTag(d.clicks_pct, 'up-good')}</td>
                 <td class="td-num">${fmtInt.format(t.impressions)}${deltaTag(d.impressions_pct, 'up-good')}</td>
                 <td class="td-num">${(t.ctr || 0).toLocaleString('es-ES', { maximumFractionDigits: 2 })}%${deltaTag(d.ctr_pct, 'up-good')}</td>
-                <td class="td-num">${fmtEur3.format(t.cpc)} €${deltaTag(d.cpc_pct, 'down-good')}</td>
+                <td class="td-num">${fmtEur.format(t.cpc)} €${deltaTag(d.cpc_pct, 'down-good')}</td>
             </tr>
         `;
     }).join('');
+
+    // En Search: enganchar click handlers para drill-down + re-render expansiones cacheadas
+    if (kind === 'search') {
+        attachSearchDrillDown(tbody);
+    }
 
     // Fila de totales (sumas de columnas absolutas, ratios recalculados desde sumas)
     const tfoot = document.querySelector(`#${cfg.ids.tableTotals} tfoot`);
@@ -1239,7 +1387,7 @@ function renderChannelComparison(kind, payload, skipChipsRebuild = false) {
             <td class="td-num">${fmtInt.format(sums.clicks)}${deltaTag(dT.clicks, 'up-good')}</td>
             <td class="td-num">${fmtInt.format(sums.impressions)}${deltaTag(dT.impressions, 'up-good')}</td>
             <td class="td-num">${totCtr.toLocaleString('es-ES', { maximumFractionDigits: 2 })}%${deltaTag(dT.ctr, 'up-good')}</td>
-            <td class="td-num">${sums.clicks > 0 ? fmtEur3.format(totCpc) + ' €' : '<span class="empty">-</span>'}${deltaTag(dT.cpc, 'down-good')}</td>
+            <td class="td-num">${sums.clicks > 0 ? fmtEur.format(totCpc) + ' €' : '<span class="empty">-</span>'}${deltaTag(dT.cpc, 'down-good')}</td>
         </tr>
     `;
 }
