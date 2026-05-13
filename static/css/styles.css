@@ -772,6 +772,43 @@ h1, h2, h3 { font-weight: 600; letter-spacing: -0.01em; }
     padding: 6px 8px;
     text-transform: none;
 }
+
+/* Sticky vertical de cabeceras de las tablas tipo Excel.
+   --sticky-header-h se actualiza dinamicamente por JS desde la altura
+   real del .sticky-header (topbar + meta-bar + tabs). */
+:root {
+    --sticky-header-h: 120px;
+    --year-row-h: 32px;
+}
+#weekly-table thead th.col-year,
+#shopping-detail-table thead th.col-year {
+    position: sticky;
+    top: var(--sticky-header-h);
+    z-index: 3;
+}
+#weekly-table thead th.col-period,
+#shopping-detail-table thead th.col-period {
+    position: sticky;
+    top: calc(var(--sticky-header-h) + var(--year-row-h));
+    z-index: 3;
+    background: var(--bg);
+}
+/* col-label y col-total tienen rowspan=2: usan el top de la fila superior
+   y mayor z-index para taparlo todo al hacer scroll en ambas direcciones */
+#weekly-table thead th.col-label,
+#shopping-detail-table thead th.col-label {
+    position: sticky;
+    left: 0;
+    top: var(--sticky-header-h);
+    z-index: 6;
+    background: var(--bg);
+}
+#weekly-table thead th.col-total,
+#shopping-detail-table thead th.col-total {
+    position: sticky;
+    top: var(--sticky-header-h);
+    z-index: 5;
+}
 #weekly-table {
     width: max-content;
     min-width: 100%;

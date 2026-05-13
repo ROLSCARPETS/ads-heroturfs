@@ -868,6 +868,24 @@ function renderShoppingDetailTable(payload) {
     }, 30);
 }
 
+function setupStickyHeightTracking() {
+    // Mide la altura del .sticky-header del dashboard y la expone como
+    // variable CSS --sticky-header-h, para que las cabeceras de las tablas
+    // se queden pegadas justo debajo al hacer scroll vertical.
+    const header = document.querySelector('.sticky-header');
+    if (!header) return;
+    const update = () => {
+        const h = header.offsetHeight;
+        if (h > 0) document.documentElement.style.setProperty('--sticky-header-h', h + 'px');
+    };
+    update();
+    window.addEventListener('resize', update);
+    // ResizeObserver para detectar cambios en el header (ej. al ocultar/mostrar alertas)
+    try {
+        new ResizeObserver(update).observe(header);
+    } catch (e) { /* navegador antiguo: ok con resize listener */ }
+}
+
 function setupScrollControls() {
     // Botones flecha (← →) sobre cada tabla con scroll horizontal.
     // Hacen scroll por la mitad del viewport visible.
@@ -1551,6 +1569,7 @@ function init() {
     setupTableSort();
     setupShoppingTableSort();
     setupScrollControls();
+    setupStickyHeightTracking();
     setupTabs();
     setupChatbot();
     loadCountrySelector();
