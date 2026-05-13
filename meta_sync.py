@@ -90,6 +90,29 @@ def fetch_insights(since, until):
     return list(_paginate(path, params))
 
 
+def fetch_ad_sets():
+    """Lista de ad sets de la cuenta. Incluye daily_budget y lifetime_budget
+    (en centavos como devuelve Meta) para poder reconstruir el presupuesto real
+    de campañas ABO (budget a nivel ad set en lugar de campaña)."""
+    fields = "id,name,campaign_id,status,effective_status,daily_budget,lifetime_budget,optimization_goal,billing_event"
+    path = f"{AD_ACCOUNT_ID}/adsets"
+    return list(_paginate(path, {"fields": fields, "limit": 200}))
+
+
+def fetch_ad_set_insights(since, until):
+    """Insights diarios a nivel ad set entre `since` y `until`."""
+    fields = "adset_id,campaign_id,date_start,impressions,reach,clicks,spend,ctr,cpc,cpm"
+    params = {
+        "level": "adset",
+        "time_range": f'{{"since":"{since.isoformat()}","until":"{until.isoformat()}"}}',
+        "time_increment": 1,
+        "fields": fields,
+        "limit": 500,
+    }
+    path = f"{AD_ACCOUNT_ID}/insights"
+    return list(_paginate(path, params))
+
+
 def sync(since=None, until=None):
     """Ejecuta el sync. Si no se pasan fechas, usa SYNC_DAYS_BACK del .env."""
     if not ACCESS_TOKEN or not AD_ACCOUNT_ID:
@@ -164,9 +187,43 @@ def sync(since=None, until=None):
                     )
                     actions_count += 1
 
+        # 3. Ad sets (para drill-down + presupuesto correcto en campañas ABO)
+        # Si falla, no rompemos el sync.
+        ad_sets_count = 0
+        ad_set_insights_count = 0
+        try:
+            print(f"[3/3] Trayendo ad sets y sus insights...")
+            ad_sets = fetch_ad_sets()
+            print(f"      {len(ad_sets)} ad sets")
+            with db.get_conn() as conn:
+                for a in ad_sets:
+                    db.upsert_meta_ad_set(conn, a)
+                    ad_sets_count += 1
+            ad_set_ins = fetch_ad_set_insights(since, until)
+            print(f"      {len(ad_set_ins)} filas de insights de ad sets")
+            with db.get_conn() as conn:
+                for ins in ad_set_ins:
+                    row = {
+                        "ad_set_id": ins.get("adset_id"),
+                        "campaign_id": ins.get("campaign_id"),
+                        "date": ins.get("date_start"),
+                        "impressions": ins.get("impressions"),
+                        "reach": ins.get("reach"),
+                        "clicks": ins.get("clicks"),
+                        "spend": ins.get("spend"),
+                        "ctr": ins.get("ctr"),
+                        "cpc": ins.get("cpc"),
+                        "cpm": ins.get("cpm"),
+                    }
+                    db.upsert_meta_ad_set_insight(conn, row)
+                    ad_set_insights_count += 1
+        except Exception as e:
+            print(f"      [WARN] Error sincronizando ad sets (continuo): {e}")
+
         with db.get_conn() as conn:
             db.log_sync_finish(conn, sync_id, campaigns_count, insights_count, actions_count, "ok")
-        print(f"\n[OK] Sync completo: {campaigns_count} campanas, {insights_count} insights, {actions_count} acciones")
+        print(f"\n[OK] Sync completo: {campaigns_count} campanas, {insights_count} insights, "
+              f"{actions_count} acciones, {ad_sets_count} ad sets, {ad_set_insights_count} ad set insights")
 
     except Exception as e:
         with db.get_conn() as conn:

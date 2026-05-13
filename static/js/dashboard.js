@@ -30,6 +30,9 @@ const state = {
     metaPayload: null,
     metaSortBy: 'cost',
     metaSortDir: 'desc',
+    // Drill-down de Meta por ad set (cache por pais + paises expandidos)
+    metaAdSetsByCountry: {},
+    metaExpandedCountries: new Set(),
     alertsPayload: null,      // cache del ultimo payload de alertas para refiltrar por tab
     activeTab: 'resumen',     // pestana activa: resumen | shopping | search | hubspot
 };
@@ -136,6 +139,7 @@ const fetchShoppingComparison = () => fetchJson(`/api/google/shopping-comparison
 const fetchSearchComparison   = () => fetchJson(`/api/google/search-comparison?${buildQuery({granularity: state.searchGranularity})}`);
 const fetchSearchAdGroups     = (country) => fetchJson(`/api/google/search-ad-groups?${buildQuery({country: country || ''})}`);
 const fetchMetaComparison     = () => fetchJson(`/api/meta/country-comparison?${buildQuery({granularity: state.metaGranularity})}`);
+const fetchMetaAdSets         = (country) => fetchJson(`/api/meta/ad-sets?${buildQuery({country: country || ''})}`);
 
 // Google Ads APIs
 const fetchGoogleKpis = ()      => fetchJson(`/api/google/kpis?${buildQuery()}`);
@@ -589,6 +593,8 @@ async function loadAll() {
     // Reset de caches dependientes de filtros (rango/pais)
     state.searchAdGroupsByCountry = {};
     state.searchExpandedCountries = new Set();
+    state.metaAdSetsByCountry = {};
+    state.metaExpandedCountries = new Set();
     try {
         const [k, ts, cs, hsK, hsF, hsSrc, hsSt, hsCo, wk, gK, gCs, al, sh, sr, mt] = await Promise.all([
             fetchKpis(), fetchTimeseries(), fetchCampaigns(),
@@ -824,6 +830,8 @@ async function loadSearchOnly() {
 
 async function loadMetaOnly() {
     try {
+        state.metaAdSetsByCountry = {};
+        state.metaExpandedCountries = new Set();
         renderChannelComparison('meta', await fetchMetaComparison());
     } catch (e) {
         toast('Error cargando comparativa Meta: ' + e.message, 'error');
@@ -1100,65 +1108,117 @@ function renderChannelCountryChips(kind, payload) {
     });
 }
 
-// === Drill-down de Search: ad groups por pais ===
-// Numero de columnas de la tabla de totales de Search (debe coincidir con el thead).
-const SEARCH_TABLE_COLSPAN = 9;
+// === Drill-down generico: por ad group (Search) o por ad set (Meta) ===
+// La tabla totales de Shopping/Search/Meta tiene 9 columnas (debe coincidir
+// con el thead). Cualquier cambio de columnas en el HTML requiere actualizar
+// este valor.
+const DRILL_TABLE_COLSPAN = 9;
 
-function attachSearchDrillDown(tbody) {
+// Config por kind: que fetcher usar, donde cachear, y como pintar cada sub-fila.
+const DRILL_CFG = {
+    search: {
+        fetcher: fetchSearchAdGroups,
+        cacheKey: 'searchAdGroupsByCountry',
+        expandedKey: 'searchExpandedCountries',
+        payloadKey: 'ad_groups',                  // campo de la respuesta JSON
+        activeStatus: 'ENABLED',                  // status que NO se atenua
+        loadingLabel: 'Cargando ad groups...',
+        emptyLabel: 'No hay ad groups con datos en este periodo. (Ejecuta sync de Google Ads para poblar la tabla.)',
+        headerCells: ['Ad group / Campaña', 'Coste', 'Clicks', 'Impr.', 'CTR', 'CPC', 'Conv.', 'ROAS'],
+        renderRow: (g) => `
+            <span class="drill-subrow-num">${fmtEur.format(g.cost)} €</span>
+            <span class="drill-subrow-num">${fmtInt.format(g.clicks)}</span>
+            <span class="drill-subrow-num">${fmtInt.format(g.impressions)}</span>
+            <span class="drill-subrow-num">${(g.ctr || 0).toLocaleString('es-ES', { maximumFractionDigits: 2 })}%</span>
+            <span class="drill-subrow-num">${g.clicks > 0 ? fmtEur.format(g.cpc) + ' €' : '-'}</span>
+            <span class="drill-subrow-num">${g.conversions > 0 ? fmtInt.format(Math.round(g.conversions)) : '-'}</span>
+            <span class="drill-subrow-num">${g.roas > 0 ? g.roas.toLocaleString('es-ES', {minimumFractionDigits:2, maximumFractionDigits:2})+'x' : '-'}</span>
+        `,
+        getName: (g) => g.ad_group_name,
+        getStatus: (g) => g.ad_group_status,
+    },
+    meta: {
+        fetcher: fetchMetaAdSets,
+        cacheKey: 'metaAdSetsByCountry',
+        expandedKey: 'metaExpandedCountries',
+        payloadKey: 'ad_sets',
+        activeStatus: 'ACTIVE',
+        loadingLabel: 'Cargando ad sets...',
+        emptyLabel: 'No hay ad sets con datos en este periodo. (Ejecuta sync de Meta para poblar la tabla.)',
+        headerCells: ['Ad set / Campaña', 'Pres./día', 'Coste', 'Clicks', 'Impr.', 'CTR', 'CPC', 'Alcance'],
+        renderRow: (g) => `
+            <span class="drill-subrow-num">${g.daily_budget > 0 ? fmtEur.format(g.daily_budget) + ' €' : '-'}</span>
+            <span class="drill-subrow-num">${fmtEur.format(g.cost)} €</span>
+            <span class="drill-subrow-num">${fmtInt.format(g.clicks)}</span>
+            <span class="drill-subrow-num">${fmtInt.format(g.impressions)}</span>
+            <span class="drill-subrow-num">${(g.ctr || 0).toLocaleString('es-ES', { maximumFractionDigits: 2 })}%</span>
+            <span class="drill-subrow-num">${g.clicks > 0 ? fmtEur.format(g.cpc) + ' €' : '-'}</span>
+            <span class="drill-subrow-num">${fmtInt.format(g.reach || 0)}</span>
+        `,
+        getName: (g) => g.ad_set_name,
+        getStatus: (g) => g.ad_set_status,
+    },
+};
+
+function attachDrillDown(kind, tbody) {
+    const cfg = DRILL_CFG[kind];
+    if (!cfg) return;
     tbody.querySelectorAll('tr.drill-row[data-drill-country]').forEach(tr => {
-        tr.addEventListener('click', () => toggleSearchDrillDown(tr));
+        tr.addEventListener('click', () => toggleDrillDown(kind, tr));
         // Re-render expansiones previas si el pais sigue expandido
         const c = tr.dataset.drillCountry;
-        if (state.searchExpandedCountries.has(c)) {
-            const cached = state.searchAdGroupsByCountry[c];
-            if (cached) insertAdGroupSubRows(tr, c, cached);
+        if (state[cfg.expandedKey].has(c)) {
+            const cached = state[cfg.cacheKey][c];
+            if (cached) insertDrillSubRows(kind, tr, c, cached);
         }
     });
 }
 
-async function toggleSearchDrillDown(tr) {
+async function toggleDrillDown(kind, tr) {
+    const cfg = DRILL_CFG[kind];
     const c = tr.dataset.drillCountry;
-    const expanded = state.searchExpandedCountries.has(c);
+    const expandedSet = state[cfg.expandedKey];
+    const cache = state[cfg.cacheKey];
+    const expanded = expandedSet.has(c);
     const chev = tr.querySelector('.drill-chevron');
     if (expanded) {
-        // Colapsar: quitar las sub-filas + cerrar el chevron
-        state.searchExpandedCountries.delete(c);
+        // Colapsar
+        expandedSet.delete(c);
         if (chev) chev.classList.remove('open');
-        removeAdGroupSubRows(tr);
+        removeDrillSubRows(tr);
         return;
     }
     // Expandir: marcar + fetch si no esta en cache + insertar sub-filas
-    state.searchExpandedCountries.add(c);
+    expandedSet.add(c);
     if (chev) chev.classList.add('open');
-    let groups = state.searchAdGroupsByCountry[c];
-    if (!groups) {
-        // Placeholder de carga mientras llega la respuesta
-        insertAdGroupLoading(tr);
+    let items = cache[c];
+    if (!items) {
+        insertDrillLoading(tr, cfg.loadingLabel);
         try {
-            const resp = await fetchSearchAdGroups(c);
-            groups = resp.ad_groups || [];
-            state.searchAdGroupsByCountry[c] = groups;
+            const resp = await cfg.fetcher(c);
+            items = resp[cfg.payloadKey] || [];
+            cache[c] = items;
         } catch (e) {
-            removeAdGroupSubRows(tr);
-            toast('Error cargando ad groups: ' + e.message, 'error');
-            state.searchExpandedCountries.delete(c);
+            removeDrillSubRows(tr);
+            toast('Error cargando drill-down: ' + e.message, 'error');
+            expandedSet.delete(c);
             if (chev) chev.classList.remove('open');
             return;
         }
-        removeAdGroupSubRows(tr);
+        removeDrillSubRows(tr);
     }
-    insertAdGroupSubRows(tr, c, groups);
+    insertDrillSubRows(kind, tr, c, items);
 }
 
-function insertAdGroupLoading(tr) {
+function insertDrillLoading(tr, label) {
     const loadingTr = document.createElement('tr');
     loadingTr.className = 'drill-subrow drill-subrow-loading';
     loadingTr.dataset.drillParent = tr.dataset.drillCountry;
-    loadingTr.innerHTML = `<td colspan="${SEARCH_TABLE_COLSPAN}" style="text-align:center;color:#64748b;padding:14px;">Cargando ad groups...</td>`;
+    loadingTr.innerHTML = `<td colspan="${DRILL_TABLE_COLSPAN}" style="text-align:center;color:#64748b;padding:14px;">${escapeHtml(label)}</td>`;
     tr.after(loadingTr);
 }
 
-function removeAdGroupSubRows(tr) {
+function removeDrillSubRows(tr) {
     const c = tr.dataset.drillCountry;
     let next = tr.nextElementSibling;
     while (next && next.classList && next.classList.contains('drill-subrow') && next.dataset.drillParent === c) {
@@ -1168,12 +1228,13 @@ function removeAdGroupSubRows(tr) {
     }
 }
 
-function insertAdGroupSubRows(tr, country, groups) {
-    if (!groups || !groups.length) {
+function insertDrillSubRows(kind, tr, country, items) {
+    const cfg = DRILL_CFG[kind];
+    if (!items || !items.length) {
         const emptyTr = document.createElement('tr');
         emptyTr.className = 'drill-subrow drill-subrow-empty';
         emptyTr.dataset.drillParent = country;
-        emptyTr.innerHTML = `<td colspan="${SEARCH_TABLE_COLSPAN}" style="text-align:center;color:#64748b;padding:14px;">No hay ad groups con datos en este periodo. (Ejecuta sync de Google Ads para poblar la tabla.)</td>`;
+        emptyTr.innerHTML = `<td colspan="${DRILL_TABLE_COLSPAN}" style="text-align:center;color:#64748b;padding:14px;">${escapeHtml(cfg.emptyLabel)}</td>`;
         tr.after(emptyTr);
         return;
     }
@@ -1181,43 +1242,32 @@ function insertAdGroupSubRows(tr, country, groups) {
     const headerTr = document.createElement('tr');
     headerTr.className = 'drill-subrow drill-subhead';
     headerTr.dataset.drillParent = country;
+    const headerCellsHtml = cfg.headerCells.map((h, i) =>
+        `<span class="${i === 0 ? 'drill-subhead-label' : 'drill-subhead-num'}">${escapeHtml(h)}</span>`
+    ).join('');
     headerTr.innerHTML = `
-        <td colspan="${SEARCH_TABLE_COLSPAN}">
-            <div class="drill-subhead-grid">
-                <span class="drill-subhead-label">Ad group / Campaña</span>
-                <span class="drill-subhead-num">Coste</span>
-                <span class="drill-subhead-num">Clicks</span>
-                <span class="drill-subhead-num">Impr.</span>
-                <span class="drill-subhead-num">CTR</span>
-                <span class="drill-subhead-num">CPC</span>
-                <span class="drill-subhead-num">Conv.</span>
-                <span class="drill-subhead-num">ROAS</span>
-            </div>
+        <td colspan="${DRILL_TABLE_COLSPAN}">
+            <div class="drill-subhead-grid">${headerCellsHtml}</div>
         </td>
     `;
     tr.after(headerTr);
 
     // Sub-filas con datos (orden ya viene por coste desc del backend)
     let prev = headerTr;
-    groups.forEach(g => {
+    items.forEach(g => {
         const subTr = document.createElement('tr');
         subTr.className = 'drill-subrow';
         subTr.dataset.drillParent = country;
-        const statusCls = g.ad_group_status === 'ENABLED' ? '' : 'drill-paused';
+        const statusCls = cfg.getStatus(g) === cfg.activeStatus ? '' : 'drill-paused';
+        const name = cfg.getName(g) || '(sin nombre)';
         subTr.innerHTML = `
-            <td colspan="${SEARCH_TABLE_COLSPAN}">
+            <td colspan="${DRILL_TABLE_COLSPAN}">
                 <div class="drill-subrow-grid ${statusCls}">
                     <div class="drill-subrow-label">
-                        <span class="drill-ag-name" title="${escapeHtml(g.ad_group_name || '')}">${escapeHtml(g.ad_group_name || '(sin nombre)')}</span>
+                        <span class="drill-ag-name" title="${escapeHtml(name)}">${escapeHtml(name)}</span>
                         <span class="drill-camp-name" title="${escapeHtml(g.campaign_name || '')}">${escapeHtml(g.campaign_name || '')}</span>
                     </div>
-                    <span class="drill-subrow-num">${fmtEur.format(g.cost)} €</span>
-                    <span class="drill-subrow-num">${fmtInt.format(g.clicks)}</span>
-                    <span class="drill-subrow-num">${fmtInt.format(g.impressions)}</span>
-                    <span class="drill-subrow-num">${(g.ctr || 0).toLocaleString('es-ES', { maximumFractionDigits: 2 })}%</span>
-                    <span class="drill-subrow-num">${g.clicks > 0 ? fmtEur.format(g.cpc) + ' €' : '-'}</span>
-                    <span class="drill-subrow-num">${g.conversions > 0 ? fmtInt.format(Math.round(g.conversions)) : '-'}</span>
-                    <span class="drill-subrow-num">${g.roas > 0 ? g.roas.toLocaleString('es-ES', {minimumFractionDigits:2, maximumFractionDigits:2})+'x' : '-'}</span>
+                    ${cfg.renderRow(g)}
                 </div>
             </td>
         `;
@@ -1314,12 +1364,14 @@ function renderChannelComparison(kind, payload, skipChipsRebuild = false) {
         const budgetDay = t.daily_budget > 0 ? fmtEur.format(t.daily_budget) + ' €' : '<span class="empty">-</span>';
         const budgetPer = t.budget_period ? fmtEur.format(t.budget_period) + ' €' : '<span class="empty">-</span>';
         const d = t.deltas || {};
-        // En Search: la fila es clickable y muestra un chevron para drill-down a ad groups
-        const isSearch = kind === 'search';
-        const expanded = isSearch && state.searchExpandedCountries.has(c);
-        const chevron = isSearch ? `<span class="drill-chevron ${expanded ? 'open' : ''}">&#9656;</span>` : '';
-        const rowCls = isSearch ? 'drill-row' : '';
-        const rowAttrs = isSearch ? ` data-drill-country="${escapeHtml(c)}"` : '';
+        // En Search/Meta: la fila es clickable y muestra un chevron para drill-down
+        // (Search -> ad groups, Meta -> ad sets). Shopping no tiene drill-down.
+        const drillable = kind === 'search' || kind === 'meta';
+        const expandedKey = kind === 'meta' ? 'metaExpandedCountries' : 'searchExpandedCountries';
+        const expanded = drillable && state[expandedKey] && state[expandedKey].has(c);
+        const chevron = drillable ? `<span class="drill-chevron ${expanded ? 'open' : ''}">&#9656;</span>` : '';
+        const rowCls = drillable ? 'drill-row' : '';
+        const rowAttrs = drillable ? ` data-drill-country="${escapeHtml(c)}"` : '';
         return `
             <tr class="${rowCls}"${rowAttrs}>
                 <td>${chevron}${flagImg(c)}<span style="color:${colorForCountry(c)};font-weight:600;">●</span> ${escapeHtml(c)}</td>
@@ -1335,9 +1387,9 @@ function renderChannelComparison(kind, payload, skipChipsRebuild = false) {
         `;
     }).join('');
 
-    // En Search: enganchar click handlers para drill-down + re-render expansiones cacheadas
-    if (kind === 'search') {
-        attachSearchDrillDown(tbody);
+    // En Search/Meta: enganchar click handlers para drill-down + re-render expansiones cacheadas
+    if (kind === 'search' || kind === 'meta') {
+        attachDrillDown(kind, tbody);
     }
 
     // Fila de totales (sumas de columnas absolutas, ratios recalculados desde sumas)

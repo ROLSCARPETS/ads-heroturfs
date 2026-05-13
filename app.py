@@ -1633,14 +1633,28 @@ def api_meta_country_comparison():
             (since, until),
         ).fetchall()
 
-        # Presupuesto diario actual por pais (campañas Meta ACTIVE)
+        # Presupuesto diario actual por pais.
+        # Meta tiene dos modos: CBO (budget en la campaña) y ABO (budget en
+        # cada ad set). Calculamos por campaña: si campaign.daily_budget > 0
+        # usamos eso (CBO); si no, sumamos los daily_budget de sus ad sets
+        # ACTIVE (ABO). Todo en centavos -> dividir entre 100.
         budget_rows = conn.execute(
             """
-            SELECT country, SUM(daily_budget) / 100.0 daily_total
-            FROM campaigns
-            WHERE effective_status = 'ACTIVE'
-              AND daily_budget IS NOT NULL
-            GROUP BY country
+            SELECT c.country country,
+                   SUM(
+                     CASE
+                       WHEN c.daily_budget IS NOT NULL AND c.daily_budget > 0 THEN c.daily_budget
+                       ELSE COALESCE(
+                         (SELECT SUM(ads.daily_budget)
+                          FROM meta_ad_sets ads
+                          WHERE ads.campaign_id = c.id
+                            AND ads.effective_status = 'ACTIVE'
+                            AND ads.daily_budget IS NOT NULL), 0)
+                     END
+                   ) / 100.0 daily_total
+            FROM campaigns c
+            WHERE c.effective_status = 'ACTIVE'
+            GROUP BY c.country
             """,
         ).fetchall()
         budget_daily_by_country = {r["country"]: (r["daily_total"] or 0) for r in budget_rows}
@@ -1784,6 +1798,75 @@ def api_google_search_comparison():
     pueda reutilizar la logica de render.
     """
     return _google_channel_comparison("SEARCH")
+
+
+@app.route("/api/meta/ad-sets")
+def api_meta_ad_sets():
+    """Drill-down de Meta a nivel de ad set, agregado al rango actual y
+    filtrable por pais. Devuelve una lista de ad sets con sus metricas y
+    su daily_budget (en EUR ya convertido) para que el frontend pinche
+    el pais y vea cuales rinden mejor.
+    """
+    since, until, _days = _range_from_request()
+    country = request.args.get("country") or None
+
+    sql = """
+        SELECT ads.id ad_set_id,
+               ads.name ad_set_name,
+               ads.effective_status ad_set_status,
+               ads.daily_budget / 100.0 daily_budget_eur,
+               c.id campaign_id,
+               c.name campaign_name,
+               c.country country,
+               SUM(i.spend) cost,
+               SUM(i.clicks) clicks,
+               SUM(i.impressions) impressions,
+               SUM(i.reach) reach
+        FROM meta_ad_set_insights_daily i
+        JOIN meta_ad_sets ads ON ads.id = i.ad_set_id
+        JOIN campaigns c       ON c.id = ads.campaign_id
+        WHERE i.date BETWEEN ? AND ?
+    """
+    params = [since, until]
+    if country:
+        sql += " AND c.country = ?"
+        params.append(country)
+    sql += " GROUP BY ads.id, c.id ORDER BY cost DESC"
+
+    with _get_conn() as conn:
+        rows = conn.execute(sql, params).fetchall()
+        # Para CPL/leads: sumamos acciones de tipo lead asociadas a la campana
+        # del ad set. Como las acciones estan a nivel campaign en Meta API,
+        # aproximamos: leads del ad set = leads_campana * (spend_ad_set / spend_campana).
+        # Por simplicidad ahora mismo no devolvemos leads (se puede anadir despues).
+
+    out = []
+    for r in rows:
+        cost = r["cost"] or 0
+        clicks = r["clicks"] or 0
+        imp = r["impressions"] or 0
+        daily = r["daily_budget_eur"] or 0
+        out.append({
+            "ad_set_id": r["ad_set_id"],
+            "ad_set_name": r["ad_set_name"],
+            "ad_set_status": r["ad_set_status"],
+            "daily_budget": round(daily, 2),
+            "campaign_id": r["campaign_id"],
+            "campaign_name": r["campaign_name"],
+            "country": r["country"],
+            "cost": round(cost, 2),
+            "clicks": int(clicks),
+            "impressions": int(imp),
+            "reach": int(r["reach"] or 0),
+            "ctr": round((clicks / imp * 100) if imp else 0, 2),
+            "cpc": round((cost / clicks) if clicks else 0, 2),
+        })
+    return jsonify({
+        "since": since,
+        "until": until,
+        "country": country,
+        "ad_sets": out,
+    })
 
 
 @app.route("/api/google/search-ad-groups")

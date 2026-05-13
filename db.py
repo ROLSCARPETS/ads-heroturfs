@@ -37,6 +37,41 @@ CREATE TABLE IF NOT EXISTS insights_daily (
     PRIMARY KEY (campaign_id, date)
 );
 
+-- Meta ad sets (nivel intermedio campaign -> ad_set -> ad).
+-- Sincronizamos para (a) calcular presupuesto real cuando la campaña usa ABO
+-- (presupuesto a nivel ad set) y (b) permitir drill-down desde la pestaña Meta.
+-- daily_budget y lifetime_budget se guardan TAL CUAL los devuelve Meta API
+-- (en centavos). Hay que dividir entre 100 al renderizar EUR.
+CREATE TABLE IF NOT EXISTS meta_ad_sets (
+    id                 TEXT PRIMARY KEY,
+    campaign_id        TEXT NOT NULL,
+    name               TEXT,
+    status             TEXT,
+    effective_status   TEXT,
+    daily_budget       REAL,
+    lifetime_budget    REAL,
+    optimization_goal  TEXT,
+    billing_event      TEXT,
+    updated_at         TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_meta_ad_sets_campaign ON meta_ad_sets(campaign_id);
+
+CREATE TABLE IF NOT EXISTS meta_ad_set_insights_daily (
+    ad_set_id      TEXT NOT NULL,
+    campaign_id    TEXT NOT NULL,
+    date           TEXT NOT NULL,
+    impressions    INTEGER,
+    reach          INTEGER,
+    clicks         INTEGER,
+    spend          REAL,
+    ctr            REAL,
+    cpc            REAL,
+    cpm            REAL,
+    PRIMARY KEY (ad_set_id, date)
+);
+CREATE INDEX IF NOT EXISTS idx_meta_asi_date ON meta_ad_set_insights_daily(date);
+CREATE INDEX IF NOT EXISTS idx_meta_asi_campaign ON meta_ad_set_insights_daily(campaign_id);
+
 CREATE TABLE IF NOT EXISTS actions_daily (
     campaign_id     TEXT NOT NULL,
     date            TEXT NOT NULL,
@@ -594,6 +629,68 @@ def upsert_google_insight(conn, row):
             _to_float(row.get("cost")),
             _to_float(row.get("conversions")),
             _to_float(row.get("conversion_value")),
+            _to_float(row.get("ctr")),
+            _to_float(row.get("cpc")),
+            _to_float(row.get("cpm")),
+        ),
+    )
+
+
+def upsert_meta_ad_set(conn, ag):
+    """ag: dict con id, campaign_id, name, status, effective_status,
+    daily_budget, lifetime_budget, optimization_goal, billing_event."""
+    conn.execute(
+        """
+        INSERT INTO meta_ad_sets (id, campaign_id, name, status, effective_status,
+                                  daily_budget, lifetime_budget, optimization_goal,
+                                  billing_event, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+        ON CONFLICT(id) DO UPDATE SET
+            campaign_id = excluded.campaign_id,
+            name = excluded.name,
+            status = excluded.status,
+            effective_status = excluded.effective_status,
+            daily_budget = excluded.daily_budget,
+            lifetime_budget = excluded.lifetime_budget,
+            optimization_goal = excluded.optimization_goal,
+            billing_event = excluded.billing_event,
+            updated_at = datetime('now')
+        """,
+        (
+            ag.get("id"), ag.get("campaign_id"), ag.get("name"),
+            ag.get("status"), ag.get("effective_status"),
+            _to_float(ag.get("daily_budget")),
+            _to_float(ag.get("lifetime_budget")),
+            ag.get("optimization_goal"),
+            ag.get("billing_event"),
+        ),
+    )
+
+
+def upsert_meta_ad_set_insight(conn, row):
+    """row: dict con ad_set_id, campaign_id, date y metricas insights."""
+    conn.execute(
+        """
+        INSERT INTO meta_ad_set_insights_daily
+            (ad_set_id, campaign_id, date, impressions, reach, clicks,
+             spend, ctr, cpc, cpm)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(ad_set_id, date) DO UPDATE SET
+            campaign_id = excluded.campaign_id,
+            impressions = excluded.impressions,
+            reach = excluded.reach,
+            clicks = excluded.clicks,
+            spend = excluded.spend,
+            ctr = excluded.ctr,
+            cpc = excluded.cpc,
+            cpm = excluded.cpm
+        """,
+        (
+            row["ad_set_id"], row["campaign_id"], row["date"],
+            _to_int(row.get("impressions")),
+            _to_int(row.get("reach")),
+            _to_int(row.get("clicks")),
+            _to_float(row.get("spend")),
             _to_float(row.get("ctr")),
             _to_float(row.get("cpc")),
             _to_float(row.get("cpm")),
