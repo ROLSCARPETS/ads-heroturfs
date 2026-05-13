@@ -131,6 +131,15 @@ h1, h2, h3 { font-weight: 600; letter-spacing: -0.01em; }
 }
 .topbar .country-trigger:hover { border-color: #fff; }
 .topbar .country-trigger-arrow { color: rgba(255, 255, 255, 0.70); }
+/* Cuando hay pais seleccionado el fondo del trigger pasa a blanco-azulado
+   (regla .has-value mas abajo). En el topbar Navy hay que devolver el
+   texto a color oscuro para que se lea. */
+.topbar .country-dropdown.has-value .country-trigger {
+    color: var(--hero-navy);
+}
+.topbar .country-dropdown.has-value .country-trigger-arrow {
+    color: var(--hero-navy);
+}
 
 .topbar-left h1 {
     font-size: 18px;
