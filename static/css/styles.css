@@ -580,6 +580,10 @@ h1, h2, h3 { font-weight: 600; letter-spacing: -0.01em; }
     padding: 18px 20px;
     box-shadow: var(--shadow-sm);
     transition: box-shadow 0.15s;
+    /* Flex column para que el delta se alinee abajo aunque algunas cards
+       no tengan .kpi-unit. Asi todos los % quedan en la misma fila. */
+    display: flex;
+    flex-direction: column;
 }
 
 .kpi-card:hover { box-shadow: var(--shadow); }
@@ -610,9 +614,13 @@ h1, h2, h3 { font-weight: 600; letter-spacing: -0.01em; }
 }
 
 .kpi-delta {
-    margin-top: 8px;
+    /* margin-top: auto empuja la pildora al fondo del card (flex col).
+       Asi todos los % de la fila quedan alineados aunque algunos cards
+       no tengan unidad (EUR/%). */
+    margin-top: auto;
     font-size: 11px;
     font-weight: 600;
+    align-self: flex-start;  /* el flex padre estira -> sin esto se ancha */
     display: inline-flex;
     align-items: center;
     gap: 3px;
