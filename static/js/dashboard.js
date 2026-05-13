@@ -15,8 +15,14 @@ const state = {
     shoppingPayload: null,    // cache del ultimo payload para re-render sin refetch
     shoppingSortBy: 'cost',   // columna por la que se ordena la tabla shopping
     shoppingSortDir: 'desc',  // asc | desc
+    // === Search (paralelo a Shopping) ===
+    searchGranularity: 'weekly',
+    searchDisabledCountries: new Set(),
+    searchPayload: null,
+    searchSortBy: 'cost',
+    searchSortDir: 'desc',
     alertsPayload: null,      // cache del ultimo payload de alertas para refiltrar por tab
-    activeTab: 'resumen',     // pestana activa: resumen | shopping | hubspot
+    activeTab: 'resumen',     // pestana activa: resumen | shopping | search | hubspot
 };
 
 // Paleta de colores por pais para los graficos comparativos
@@ -118,6 +124,7 @@ const fetchCountries = ()  => fetchJson('/api/countries');
 const fetchWeekly = ()     => fetchJson(`/api/weekly?${buildQuery({granularity: state.weeklyGranularity})}`);
 const fetchAlerts = ()     => fetchJson(`/api/alerts${state.country ? '?country=' + encodeURIComponent(state.country) : ''}`);
 const fetchShoppingComparison = () => fetchJson(`/api/google/shopping-comparison?${buildQuery({granularity: state.shoppingGranularity})}`);
+const fetchSearchComparison   = () => fetchJson(`/api/google/search-comparison?${buildQuery({granularity: state.searchGranularity})}`);
 
 // Google Ads APIs
 const fetchGoogleKpis = ()      => fetchJson(`/api/google/kpis?${buildQuery()}`);
@@ -569,7 +576,7 @@ function csvCell(v) {
 // === Carga principal ===
 async function loadAll() {
     try {
-        const [k, ts, cs, hsK, hsF, hsSrc, hsSt, hsCo, wk, gK, gCs, al, sh] = await Promise.all([
+        const [k, ts, cs, hsK, hsF, hsSrc, hsSt, hsCo, wk, gK, gCs, al, sh, sr] = await Promise.all([
             fetchKpis(), fetchTimeseries(), fetchCampaigns(),
             fetchHsKpis(), fetchHsFunnel(), fetchHsBySource(),
             fetchHsByStatus(), fetchHsByCountry(),
@@ -577,9 +584,11 @@ async function loadAll() {
             fetchGoogleKpis(), fetchGoogleCampaigns(),
             fetchAlerts(),
             fetchShoppingComparison(),
+            fetchSearchComparison(),
         ]);
         renderAlerts(al);
-        renderShoppingComparison(sh);
+        renderChannelComparison('shopping', sh);
+        renderChannelComparison('search', sr);
         renderKpis(k);
         renderTimeseries(ts);
         state.campaigns = cs;
@@ -629,6 +638,9 @@ function deltaTag(pct, direction = 'up-good') {
 function filterAlertsByTab(alerts, tab) {
     if (tab === 'shopping') {
         return alerts.filter(a => /\|\s*Shopping\s*\|/i.test(a.campaign_name || ''));
+    }
+    if (tab === 'search') {
+        return alerts.filter(a => /\|\s*Search\s*\|/i.test(a.campaign_name || ''));
     }
     return alerts;
 }
@@ -772,22 +784,58 @@ async function loadWeeklyOnly() {
 
 async function loadShoppingOnly() {
     try {
-        renderShoppingComparison(await fetchShoppingComparison());
+        renderChannelComparison('shopping', await fetchShoppingComparison());
     } catch (e) {
         toast('Error cargando comparativa Shopping: ' + e.message, 'error');
     }
 }
 
-// === Comparativa Shopping por pais ===
-let chartShoppingCost = null;
-let chartShoppingCpc = null;
-let chartShoppingCtr = null;
+async function loadSearchOnly() {
+    try {
+        renderChannelComparison('search', await fetchSearchComparison());
+    } catch (e) {
+        toast('Error cargando comparativa Search: ' + e.message, 'error');
+    }
+}
 
-function buildShoppingChart(canvasId, payload, metric, yLabel, formatter, chartType = 'line') {
+// === Comparativa de canal (Shopping / Search) por pais ===
+// Estructura paralela: un set de DOM IDs prefijado por kind + un slot de charts por kind.
+const channelCharts = {
+    shopping: { cost: null, cpc: null, ctr: null },
+    search:   { cost: null, cpc: null, ctr: null },
+};
+
+// Devuelve los selectores/keys derivados del kind ('shopping' | 'search').
+function channelCfg(kind) {
+    return {
+        kind,
+        ids: {
+            info:          `${kind}-info`,
+            chips:         `${kind}-country-chips`,
+            tableTotals:   `table-${kind}-totals`,
+            chartCost:     `chart-${kind}-cost`,
+            chartCpc:      `chart-${kind}-cpc`,
+            chartCtr:      `chart-${kind}-ctr`,
+            detailTable:   `${kind}-detail-table`,
+            detailWrapper: `${kind}-detail-wrapper`,
+            detailInfo:    `${kind}-detail-info`,
+        },
+        stateKeys: {
+            payload:           `${kind}Payload`,
+            disabledCountries: `${kind}DisabledCountries`,
+            sortBy:            `${kind}SortBy`,
+            sortDir:           `${kind}SortDir`,
+            granularity:       `${kind}Granularity`,
+        },
+    };
+}
+
+function buildChannelChart(kind, canvasId, payload, metric, yLabel, formatter, chartType = 'line') {
+    const disabledSet = state[channelCfg(kind).stateKeys.disabledCountries];
     const periods = payload.periods || [];
     const series = (payload.series && payload.series[metric]) || {};
     // Filtrar paises desactivados
-    const countries = (payload.countries || []).filter(c => !state.shoppingDisabledCountries.has(c));
+    const countries = (payload.countries || []).filter(c => !disabledSet.has(c));
     const labels = periods.map(p => p.label);
 
     const datasets = countries.map(c => {
@@ -857,18 +905,20 @@ const SHOPPING_DETAIL_METRICS = [
     { key: 'cpc',           title: 'CPC',             format: 'eur3', totalKey: 'cpc' },
 ];
 
-function renderShoppingDetailTable(payload) {
-    const table = document.getElementById('shopping-detail-table');
+function renderChannelDetailTable(kind, payload) {
+    const cfg = channelCfg(kind);
+    const table = document.getElementById(cfg.ids.detailTable);
     if (!table) return;
     const periods = payload.periods || [];
     const allCountries = payload.countries || [];
-    const visibleCountries = allCountries.filter(c => !state.shoppingDisabledCountries.has(c));
+    const disabledSet = state[cfg.stateKeys.disabledCountries];
+    const visibleCountries = allCountries.filter(c => !disabledSet.has(c));
     const series = payload.series || {};
     const totals = payload.totals || {};
     const colspan = 2 + periods.length;
 
     // Info
-    const info = $('#shopping-detail-info');
+    const info = document.getElementById(cfg.ids.detailInfo);
     if (info) {
         const granLabel = payload.granularity === 'monthly' ? 'meses' : payload.granularity === 'weekly' ? 'semanas' : 'días';
         info.textContent = `${visibleCountries.length} países visibles · ${periods.length} ${granLabel}`;
@@ -907,7 +957,7 @@ function renderShoppingDetailTable(payload) {
     });
     tbody.innerHTML = body;
     setTimeout(() => {
-        const wrap = document.getElementById('shopping-detail-wrapper');
+        const wrap = document.getElementById(cfg.ids.detailWrapper);
         if (wrap) wrap.dispatchEvent(new Event('scroll'));
     }, 30);
 }
@@ -959,34 +1009,38 @@ function setupScrollControls() {
     });
 }
 
-function setupShoppingTableSort() {
-    const ths = document.querySelectorAll('#table-shopping-totals thead th[data-sort]');
+function setupChannelTableSort(kind) {
+    const cfg = channelCfg(kind);
+    const ths = document.querySelectorAll(`#${cfg.ids.tableTotals} thead th[data-sort]`);
     ths.forEach(th => {
         th.addEventListener('click', () => {
             const col = th.dataset.sort;
-            if (state.shoppingSortBy === col) {
-                state.shoppingSortDir = state.shoppingSortDir === 'asc' ? 'desc' : 'asc';
+            if (state[cfg.stateKeys.sortBy] === col) {
+                state[cfg.stateKeys.sortDir] = state[cfg.stateKeys.sortDir] === 'asc' ? 'desc' : 'asc';
             } else {
-                state.shoppingSortBy = col;
+                state[cfg.stateKeys.sortBy] = col;
                 // Por defecto: texto asc, numericos desc
-                state.shoppingSortDir = col === 'country' ? 'asc' : 'desc';
+                state[cfg.stateKeys.sortDir] = col === 'country' ? 'asc' : 'desc';
             }
-            if (state.shoppingPayload) renderShoppingComparison(state.shoppingPayload, true);
+            const cached = state[cfg.stateKeys.payload];
+            if (cached) renderChannelComparison(kind, cached, true);
         });
     });
 }
 
-function renderShoppingCountryChips(payload) {
-    const cont = $('#shopping-country-chips');
+function renderChannelCountryChips(kind, payload) {
+    const cfg = channelCfg(kind);
+    const cont = document.getElementById(cfg.ids.chips);
     if (!cont) return;
     const countries = payload.countries || [];
     if (!countries.length) {
         cont.innerHTML = '';
         return;
     }
+    const disabledSet = state[cfg.stateKeys.disabledCountries];
     const items = ['<span class="shopping-country-chips-label">Países:</span>'];
     countries.forEach(c => {
-        const disabled = state.shoppingDisabledCountries.has(c);
+        const disabled = disabledSet.has(c);
         const color = colorForCountry(c);
         items.push(`
             <span class="country-chip ${disabled ? 'disabled' : ''}" data-country="${escapeHtml(c)}" style="border-color:${color};color:${color};">
@@ -1001,56 +1055,60 @@ function renderShoppingCountryChips(payload) {
     cont.querySelectorAll('.country-chip').forEach(chip => {
         chip.addEventListener('click', () => {
             const c = chip.dataset.country;
-            if (state.shoppingDisabledCountries.has(c)) {
-                state.shoppingDisabledCountries.delete(c);
+            if (disabledSet.has(c)) {
+                disabledSet.delete(c);
             } else {
-                state.shoppingDisabledCountries.add(c);
+                disabledSet.add(c);
             }
             // Re-render solo los charts con el payload cacheado (sin re-fetch)
-            if (state.shoppingPayload) renderShoppingComparison(state.shoppingPayload, true);
+            const cached = state[cfg.stateKeys.payload];
+            if (cached) renderChannelComparison(kind, cached, true);
         });
     });
 }
 
-function renderShoppingComparison(payload, skipChipsRebuild = false) {
+function renderChannelComparison(kind, payload, skipChipsRebuild = false) {
     if (!payload || !payload.countries) return;
+    const cfg = channelCfg(kind);
     // Cachear payload para re-render rapido al togglear paises
-    state.shoppingPayload = payload;
+    state[cfg.stateKeys.payload] = payload;
+    const disabledSet = state[cfg.stateKeys.disabledCountries];
 
-    const info = $('#shopping-info');
+    const info = document.getElementById(cfg.ids.info);
     if (info) {
         const granLabel = payload.granularity === 'monthly' ? 'meses' : payload.granularity === 'weekly' ? 'semanas' : 'días';
-        const visibles = payload.countries.filter(c => !state.shoppingDisabledCountries.has(c)).length;
+        const visibles = payload.countries.filter(c => !disabledSet.has(c)).length;
         info.textContent = `${payload.periods.length} ${granLabel} · ${payload.since} a ${payload.until} · ${visibles}/${payload.countries.length} países`;
     }
 
-    if (!skipChipsRebuild) renderShoppingCountryChips(payload);
+    if (!skipChipsRebuild) renderChannelCountryChips(kind, payload);
     else {
         // Solo actualizar clases (sin re-construir DOM)
-        document.querySelectorAll('#shopping-country-chips .country-chip').forEach(chip => {
-            chip.classList.toggle('disabled', state.shoppingDisabledCountries.has(chip.dataset.country));
+        document.querySelectorAll(`#${cfg.ids.chips} .country-chip`).forEach(chip => {
+            chip.classList.toggle('disabled', disabledSet.has(chip.dataset.country));
         });
     }
 
-    if (chartShoppingCost) chartShoppingCost.destroy();
-    if (chartShoppingCpc) chartShoppingCpc.destroy();
-    if (chartShoppingCtr) chartShoppingCtr.destroy();
+    const charts = channelCharts[kind];
+    if (charts.cost) charts.cost.destroy();
+    if (charts.cpc)  charts.cpc.destroy();
+    if (charts.ctr)  charts.ctr.destroy();
 
     const fmtEurFn = (v) => fmtEur.format(v || 0) + ' €';
     const fmtCpcFn = (v) => fmtEur3.format(v || 0) + ' €';
     const fmtCtrFn = (v) => (v || 0).toLocaleString('es-ES', { maximumFractionDigits: 2 }) + '%';
 
-    chartShoppingCost = buildShoppingChart('chart-shopping-cost', payload, 'cost', 'EUR', fmtEurFn, 'bar');
-    chartShoppingCpc = buildShoppingChart('chart-shopping-cpc', payload, 'cpc', 'EUR / click', fmtCpcFn, 'line');
-    chartShoppingCtr = buildShoppingChart('chart-shopping-ctr', payload, 'ctr', '%', fmtCtrFn, 'line');
+    charts.cost = buildChannelChart(kind, cfg.ids.chartCost, payload, 'cost', 'EUR', fmtEurFn, 'bar');
+    charts.cpc  = buildChannelChart(kind, cfg.ids.chartCpc,  payload, 'cpc',  'EUR / click', fmtCpcFn, 'line');
+    charts.ctr  = buildChannelChart(kind, cfg.ids.chartCtr,  payload, 'ctr',  '%', fmtCtrFn, 'line');
 
     // Tabla "tipo Excel" por periodos (debajo de los charts)
-    renderShoppingDetailTable(payload);
+    renderChannelDetailTable(kind, payload);
 
-    // Tabla de totales con ordenacion segun state.shoppingSortBy/SortDir
-    const tbody = $('#table-shopping-totals tbody');
-    const sortKey = state.shoppingSortBy;
-    const dir = state.shoppingSortDir === 'asc' ? 1 : -1;
+    // Tabla de totales con ordenacion segun state[kindSortBy/SortDir]
+    const tbody = document.querySelector(`#${cfg.ids.tableTotals} tbody`);
+    const sortKey = state[cfg.stateKeys.sortBy];
+    const dir = state[cfg.stateKeys.sortDir] === 'asc' ? 1 : -1;
     const sorted = [...payload.countries].sort((a, b) => {
         let va, vb;
         if (sortKey === 'country') {
@@ -1068,10 +1126,10 @@ function renderShoppingComparison(payload, skipChipsRebuild = false) {
     });
 
     // Marcar columna ordenada en el thead
-    document.querySelectorAll('#table-shopping-totals thead th[data-sort]').forEach(th => {
+    document.querySelectorAll(`#${cfg.ids.tableTotals} thead th[data-sort]`).forEach(th => {
         th.classList.remove('sort-asc', 'sort-desc');
         if (th.dataset.sort === sortKey) {
-            th.classList.add(state.shoppingSortDir === 'asc' ? 'sort-asc' : 'sort-desc');
+            th.classList.add(state[cfg.stateKeys.sortDir] === 'asc' ? 'sort-asc' : 'sort-desc');
         }
     });
     tbody.innerHTML = sorted.map(c => {
@@ -1113,7 +1171,7 @@ function renderShoppingComparison(payload, skipChipsRebuild = false) {
     }).join('');
 
     // Fila de totales (sumas de columnas absolutas, ratios recalculados desde sumas)
-    const tfoot = $('#table-shopping-totals tfoot');
+    const tfoot = document.querySelector(`#${cfg.ids.tableTotals} tfoot`);
     const sums = sorted.reduce((acc, c) => {
         const t = payload.totals[c] || {};
         acc.cost += t.cost || 0;
@@ -1480,7 +1538,9 @@ function setupTabs() {
         renderAlertsFiltered();
         // Re-resize charts del tab activo (Chart.js no calcula bien si el canvas estaba display:none)
         setTimeout(() => {
-            [chartTimeseries, chartTopCampaigns, chartShoppingCost, chartShoppingCpc, chartShoppingCtr]
+            [chartTimeseries, chartTopCampaigns,
+             channelCharts.shopping.cost, channelCharts.shopping.cpc, channelCharts.shopping.ctr,
+             channelCharts.search.cost,   channelCharts.search.cpc,   channelCharts.search.ctr]
                 .forEach(c => { if (c) try { c.resize(); } catch (e) {} });
         }, 50);
         // Scroll arriba al cambiar
@@ -1640,8 +1700,19 @@ function init() {
         });
     });
 
+    // Selector de granularidad de la comparativa Search por pais
+    $$('.srgran-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            $$('.srgran-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            state.searchGranularity = btn.dataset.srgran;
+            loadSearchOnly();
+        });
+    });
+
     setupTableSort();
-    setupShoppingTableSort();
+    setupChannelTableSort('shopping');
+    setupChannelTableSort('search');
     setupScrollControls();
     setupStickyHeightTracking();
     setupTabs();

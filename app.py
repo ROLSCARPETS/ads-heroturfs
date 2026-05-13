@@ -1316,12 +1316,11 @@ def api_google_campaigns():
     return jsonify(out)
 
 
-@app.route("/api/google/shopping-comparison")
-def api_google_shopping_comparison():
-    """Series temporales de las campañas Shopping de Google agrupadas por pais.
-
-    Devuelve cost, clicks, impressions, ctr, cpc por (pais, periodo) para
-    construir 3 graficos comparativos (una linea por pais).
+def _google_channel_comparison(channel_type: str):
+    """Helper compartido por Shopping y Search. Devuelve el payload JSON para
+    el comparativo por pais filtrado por el canal solicitado (SHOPPING | SEARCH).
+    Refactor: la logica original era especifica de Shopping; ahora se parametriza
+    por channel_type para que Search reutilice el mismo codigo.
     """
     granularity = request.args.get("granularity", "weekly")
     if granularity not in ("daily", "weekly", "monthly"):
@@ -1344,12 +1343,12 @@ def api_google_shopping_comparison():
                    SUM(i.impressions) impressions
             FROM google_insights_daily i
             JOIN google_campaigns c ON c.id = i.campaign_id
-            WHERE c.advertising_channel_type = 'SHOPPING'
+            WHERE c.advertising_channel_type = ?
               AND i.date BETWEEN ? AND ?
             GROUP BY c.country, period
             ORDER BY c.country, period
             """,
-            (since, until),
+            (channel_type, since, until),
         ).fetchall()
 
         # Presupuesto por (pais, periodo) usando histórico
@@ -1363,26 +1362,27 @@ def api_google_shopping_comparison():
                    COUNT(DISTINCT bh.date) days_in_period
             FROM google_budget_history bh
             JOIN google_campaigns c ON c.id = bh.campaign_id
-            WHERE c.advertising_channel_type = 'SHOPPING'
+            WHERE c.advertising_channel_type = ?
               AND c.status = 'ENABLED'
               AND bh.date BETWEEN ? AND ?
             GROUP BY c.country, period
             ORDER BY c.country, period
             """,
-            (since, until),
+            (channel_type, since, until),
         ).fetchall()
 
-        # Presupuesto diario actual total por pais (solo campañas Shopping ENABLED).
+        # Presupuesto diario actual total por pais (solo campañas ENABLED del canal).
         # Usado como referencia y para fallback si no hay historico.
         budget_rows = conn.execute(
             """
             SELECT country, SUM(daily_budget) daily_total
             FROM google_campaigns
-            WHERE advertising_channel_type = 'SHOPPING'
+            WHERE advertising_channel_type = ?
               AND status = 'ENABLED'
               AND daily_budget IS NOT NULL
             GROUP BY country
             """,
+            (channel_type,),
         ).fetchall()
         budget_daily_by_country = {r["country"]: (r["daily_total"] or 0) for r in budget_rows}
 
@@ -1397,12 +1397,12 @@ def api_google_shopping_comparison():
                    COUNT(DISTINCT bh.date) days_covered
             FROM google_budget_history bh
             JOIN google_campaigns c ON c.id = bh.campaign_id
-            WHERE c.advertising_channel_type = 'SHOPPING'
+            WHERE c.advertising_channel_type = ?
               AND c.status = 'ENABLED'
               AND bh.date BETWEEN ? AND ?
             GROUP BY c.country
             """,
-            (since, until),
+            (channel_type, since, until),
         ).fetchall()
         budget_period_by_country = {
             r["country"]: {"total": r["total_budget"] or 0, "days": r["days_covered"] or 0}
@@ -1508,11 +1508,11 @@ def api_google_shopping_comparison():
                    SUM(i.impressions) impressions
             FROM google_insights_daily i
             JOIN google_campaigns c ON c.id = i.campaign_id
-            WHERE c.advertising_channel_type = 'SHOPPING'
+            WHERE c.advertising_channel_type = ?
               AND i.date BETWEEN ? AND ?
             GROUP BY c.country
             """,
-            (prev_since, prev_until),
+            (channel_type, prev_since, prev_until),
         ).fetchall()
         prev_budget_rows = conn.execute(
             """
@@ -1522,12 +1522,12 @@ def api_google_shopping_comparison():
                    COUNT(DISTINCT bh.date) days_in_period
             FROM google_budget_history bh
             JOIN google_campaigns c ON c.id = bh.campaign_id
-            WHERE c.advertising_channel_type = 'SHOPPING'
+            WHERE c.advertising_channel_type = ?
               AND c.status = 'ENABLED'
               AND bh.date BETWEEN ? AND ?
             GROUP BY c.country
             """,
-            (prev_since, prev_until),
+            (channel_type, prev_since, prev_until),
         ).fetchall()
     prev_by_country = {r["country"]: dict(r) for r in prev_cost_rows}
     prev_budget_by_country = {r["country"]: dict(r) for r in prev_budget_rows}
@@ -1589,6 +1589,21 @@ def api_google_shopping_comparison():
         "series": series,
         "totals": totals,
     })
+
+
+@app.route("/api/google/shopping-comparison")
+def api_google_shopping_comparison():
+    """Series temporales de campañas SHOPPING de Google agrupadas por pais."""
+    return _google_channel_comparison("SHOPPING")
+
+
+@app.route("/api/google/search-comparison")
+def api_google_search_comparison():
+    """Series temporales de campañas SEARCH de Google agrupadas por pais.
+    Misma estructura/payload que /shopping-comparison para que el frontend
+    pueda reutilizar la logica de render.
+    """
+    return _google_channel_comparison("SEARCH")
 
 
 @app.route("/api/google/sync", methods=["POST"])

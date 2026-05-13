@@ -79,6 +79,7 @@
     <nav class="tabs" role="tablist">
         <button class="tab-btn active" data-tab="resumen" type="button">&#128202; Resumen</button>
         <button class="tab-btn" data-tab="shopping" type="button">&#128717; Shopping por pa&iacute;s</button>
+        <button class="tab-btn" data-tab="search" type="button">&#128269; Search por pa&iacute;s</button>
         <button class="tab-btn" data-tab="hubspot" type="button">&#128142; HubSpot CRM</button>
     </nav>
     </div>
@@ -400,6 +401,93 @@
 
         </section>
         <!-- ============== /TAB SHOPPING ============== -->
+
+        <!-- ============== TAB: SEARCH ============== -->
+        <section class="tab-pane" data-tab="search">
+        <section class="section-divider">
+            <h2 class="section-title">Comparativa Search por pa&iacute;s <span class="section-badge section-badge-google">Google Search</span></h2>
+            <p class="section-desc">Evoluci&oacute;n de inversi&oacute;n, CPC y CTR de campa&ntilde;as Search en cada pa&iacute;s. Una l&iacute;nea por pa&iacute;s.</p>
+        </section>
+
+        <section class="shopping-card">
+            <div class="shopping-header">
+                <span id="search-info" class="weekly-info">-</span>
+                <div class="granularity-selector">
+                    <button class="srgran-btn" data-srgran="daily">D&iacute;a</button>
+                    <button class="srgran-btn active" data-srgran="weekly">Semana</button>
+                    <button class="srgran-btn" data-srgran="monthly">Mes</button>
+                </div>
+            </div>
+            <div id="search-country-chips" class="shopping-country-chips"></div>
+
+            <!-- Tabla resumen por país (movida arriba como vista rápida) -->
+            <div class="shopping-totals">
+                <div class="table-wrapper">
+                    <table id="table-search-totals">
+                        <thead>
+                            <tr>
+                                <th data-sort="country">Pa&iacute;s</th>
+                                <th class="th-num" data-sort="daily_budget" title="Presupuesto diario actual de campañas ENABLED">Pres./d&iacute;a</th>
+                                <th class="th-num" data-sort="cost" title="Coste real gastado en el rango">Coste</th>
+                                <th class="th-num" data-sort="budget_period" title="Presupuesto diario x dias del rango">Pres. periodo</th>
+                                <th class="th-num" data-sort="utilization_pct" title="% de presupuesto consumido. <100% indica que el CPC max puede estar limitando entrega.">Utilizaci&oacute;n</th>
+                                <th class="th-num" data-sort="clicks">Clicks</th>
+                                <th class="th-num" data-sort="impressions">Impr.</th>
+                                <th class="th-num" data-sort="ctr">CTR</th>
+                                <th class="th-num" data-sort="cpc">CPC</th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
+                        <tfoot></tfoot>
+                    </table>
+                </div>
+            </div>
+
+            <div class="shopping-grid">
+                <div class="chart-card chart-shopping">
+                    <div class="chart-header">
+                        <h2>&#128176; Inversi&oacute;n</h2>
+                        <span class="chart-subtitle">Coste por pa&iacute;s (EUR)</span>
+                    </div>
+                    <div class="chart-body"><canvas id="chart-search-cost"></canvas></div>
+                </div>
+                <div class="chart-card chart-shopping">
+                    <div class="chart-header">
+                        <h2>&#128181; CPC</h2>
+                        <span class="chart-subtitle">Coste por click (EUR)</span>
+                    </div>
+                    <div class="chart-body"><canvas id="chart-search-cpc"></canvas></div>
+                </div>
+                <div class="chart-card chart-shopping">
+                    <div class="chart-header">
+                        <h2>&#127919; CTR</h2>
+                        <span class="chart-subtitle">Click-through rate (%)</span>
+                    </div>
+                    <div class="chart-body"><canvas id="chart-search-ctr"></canvas></div>
+                </div>
+            </div>
+            <!-- Tabla "tipo Excel" por periodos -->
+            <div class="shopping-detail-table-section">
+                <div class="shopping-detail-header">
+                    <span id="search-detail-info" class="weekly-info">-</span>
+                    <span class="shopping-detail-hint">Respeta los chips de pa&iacute;ses y la granularidad de arriba</span>
+                </div>
+                <div class="scroll-controls">
+                    <button type="button" class="scroll-btn" data-scroll-target="search-detail-wrapper" data-scroll-dir="-1" title="Desplazar a la izquierda">&#9664;</button>
+                    <button type="button" class="scroll-btn" data-scroll-target="search-detail-wrapper" data-scroll-dir="1" title="Desplazar a la derecha">&#9654;</button>
+                </div>
+                <div class="weekly-table-wrapper" id="search-detail-wrapper">
+                    <table id="search-detail-table" class="shopping-detail-table">
+                        <thead></thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+            </div>
+
+        </section>
+
+        </section>
+        <!-- ============== /TAB SEARCH ============== -->
 
         <!-- ============== TAB: HUBSPOT ============== -->
         <section class="tab-pane" data-tab="hubspot">
