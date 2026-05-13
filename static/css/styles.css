@@ -651,8 +651,12 @@ h1, h2, h3 { font-weight: 600; letter-spacing: -0.01em; }
     font-size: 10px;
     font-weight: 700;
     letter-spacing: 0.08em;
-    margin-left: auto;
     margin-right: 12px;
+}
+.shopping-header #resumen-info { margin-right: auto; }
+.shopping-header .meta-toggle input[type="checkbox"] {
+    accent-color: var(--accent);
+    cursor: pointer;
 }
 /* Header de la tarjeta Meta: agrupa toggle + selector de granularidad */
 .meta-header-controls {

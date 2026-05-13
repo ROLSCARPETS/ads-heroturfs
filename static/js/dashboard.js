@@ -38,6 +38,11 @@ const state = {
     // Set vacio (buildChannelChart espera DisabledCountries por kind; Resumen
     // no expone chips de paises pero reusamos la misma funcion).
     resumenDisabledCountries: new Set(),
+    // Ocultar buckets parciales (semanas/meses incompletos por bordes del rango)
+    resumenHidePartial: (() => {
+        try { return localStorage.getItem('resumen-hide-partial') === '1'; }
+        catch (e) { return false; }
+    })(),
     // Filas expandidas en la tabla "Vista por periodos" (Resumen tab).
     // Cada id es 'w-{section_idx}-{row_idx}'. No persistimos en localStorage
     // (las expansiones se reinician al recargar la pagina).
@@ -874,7 +879,9 @@ async function loadResumenComparisonOnly() {
 }
 
 // Renderiza los 3 charts del top del Resumen (Inversion / Leads / CPL) con
-// una sola serie agregada (no desglosado por pais).
+// una sola serie agregada (no desglosado por pais). Marca con opacidad
+// reducida los buckets parciales (semanas/meses incompletos por bordes del
+// rango), o los oculta si state.resumenHidePartial = true.
 function renderResumenComparison(payload) {
     if (!payload || !payload.series) return;
     const charts = channelCharts.resumen;
@@ -882,33 +889,59 @@ function renderResumenComparison(payload) {
     if (charts.leads) charts.leads.destroy();
     if (charts.cpl)   charts.cpl.destroy();
 
-    const labels = (payload.periods || []).map(p => p.label);
+    // Filtra periods/series si el toggle "Ocultar parciales" esta activo.
+    let periods = payload.periods || [];
+    let costSeries = payload.series.cost || [];
+    let leadsSeries = payload.series.leads || [];
+    let cplSeries = payload.series.cpl || [];
+    if (state.resumenHidePartial) {
+        const idxKeep = periods.map((p, i) => p.is_partial ? -1 : i).filter(i => i >= 0);
+        periods = idxKeep.map(i => periods[i]);
+        costSeries = idxKeep.map(i => costSeries[i]);
+        leadsSeries = idxKeep.map(i => leadsSeries[i]);
+        cplSeries = idxKeep.map(i => cplSeries[i]);
+    }
+
     const fmtEurFn = (v) => fmtEur.format(v || 0) + ' €';
     const fmtIntFn = (v) => fmtInt.format(v || 0);
 
-    // Hero palette: Navy + Red + Blue como diferenciador visual
-    charts.cost  = buildAggregateChart('chart-resumen-cost',  labels, payload.series.cost  || [], 'EUR',        fmtEurFn, 'bar',  '#005e94');
-    charts.leads = buildAggregateChart('chart-resumen-leads', labels, payload.series.leads || [], 'Leads',      fmtIntFn, 'bar',  '#e3332b');
-    charts.cpl   = buildAggregateChart('chart-resumen-cpl',   labels, payload.series.cpl   || [], 'EUR / lead', fmtEurFn, 'line', '#323f49');
+    // Hero palette: Blue + Red + Navy
+    charts.cost  = buildAggregateChart('chart-resumen-cost',  periods, costSeries,  'EUR',        fmtEurFn, 'bar',  '#005e94');
+    charts.leads = buildAggregateChart('chart-resumen-leads', periods, leadsSeries, 'Leads',      fmtIntFn, 'bar',  '#e3332b');
+    charts.cpl   = buildAggregateChart('chart-resumen-cpl',   periods, cplSeries,   'EUR / lead', fmtEurFn, 'line', '#323f49');
 
     const info = document.getElementById('resumen-info');
     if (info) {
         const granLabel = payload.granularity === 'monthly' ? 'meses' : payload.granularity === 'weekly' ? 'semanas' : 'días';
-        info.textContent = `${(payload.periods || []).length} ${granLabel} · ${payload.since} a ${payload.until}`;
+        const partialCount = (payload.periods || []).filter(p => p.is_partial).length;
+        const partialHint = (partialCount && !state.resumenHidePartial)
+            ? ` · ${partialCount} parcial${partialCount > 1 ? 'es' : ''} (atenuados)`
+            : '';
+        info.textContent = `${periods.length} ${granLabel} · ${payload.since} a ${payload.until}${partialHint}`;
     }
 }
 
 // Builder para charts agregados (una sola serie). Usado por el Resumen.
-function buildAggregateChart(canvasId, labels, data, yLabel, formatter, chartType, color) {
+// `periods` es un array de {key, label, is_partial, days_covered, days_total}.
+// Los buckets parciales se renderizan con opacidad reducida + asterisco en
+// el datalabel y tooltip enriquecido.
+function buildAggregateChart(canvasId, periods, data, yLabel, formatter, chartType, color) {
     const canvas = document.getElementById(canvasId);
     if (!canvas) return null;
     const ctx = canvas.getContext('2d');
+
+    const labels = periods.map(p => (p.label + (p.is_partial ? ' *' : '')));
+    // Color por punto: pleno para completo, semi-transparente para parcial.
+    const colorFull = color;
+    const colorPartial = color + '66';  // ~40% alpha
+    const pointColors = periods.map(p => p.is_partial ? colorPartial : colorFull);
+
     const dataset = (chartType === 'bar')
         ? {
             label: 'Total',
             data,
-            backgroundColor: color,
-            borderColor: color,
+            backgroundColor: pointColors,
+            borderColor: pointColors,
             borderWidth: 0,
             borderRadius: 4,
             maxBarThickness: 36,
@@ -921,8 +954,11 @@ function buildAggregateChart(canvasId, labels, data, yLabel, formatter, chartTyp
             fill: false,
             tension: 0.3,
             borderWidth: 2,
-            pointRadius: 3,
+            pointRadius: periods.map(p => p.is_partial ? 4 : 3),
             pointHoverRadius: 6,
+            pointBackgroundColor: pointColors,
+            pointBorderColor: pointColors,
+            pointStyle: periods.map(p => p.is_partial ? 'crossRot' : 'circle'),
         };
     return new Chart(ctx, {
         type: chartType,
@@ -936,7 +972,14 @@ function buildAggregateChart(canvasId, labels, data, yLabel, formatter, chartTyp
                 legend: { display: false },
                 tooltip: {
                     callbacks: {
-                        label: (ctx) => formatter(ctx.parsed.y),
+                        label: (ctx) => {
+                            const p = periods[ctx.dataIndex] || {};
+                            const v = formatter(ctx.parsed.y);
+                            if (p.is_partial) {
+                                return `${v}  ·  Parcial: ${p.days_covered}/${p.days_total} días`;
+                            }
+                            return v;
+                        },
                     },
                 },
                 datalabels: {
@@ -945,12 +988,16 @@ function buildAggregateChart(canvasId, labels, data, yLabel, formatter, chartTyp
                     offset: 2,
                     clamp: true,
                     font: { size: 11, weight: '600' },
-                    color,
+                    color: (ctx) => periods[ctx.dataIndex] && periods[ctx.dataIndex].is_partial
+                        ? colorPartial : colorFull,
                     display: (ctx) => {
                         const v = ctx.dataset.data[ctx.dataIndex];
                         return v !== null && v !== undefined && v !== 0;
                     },
-                    formatter: (value) => formatter(value),
+                    formatter: (value, ctx) => {
+                        const p = periods[ctx.dataIndex] || {};
+                        return formatter(value) + (p.is_partial ? ' *' : '');
+                    },
                 },
             },
             scales: {
@@ -2172,6 +2219,18 @@ function init() {
             loadResumenComparisonOnly();
         });
     });
+
+    // Toggle "Ocultar parciales" del Resumen
+    const hidePartialCb = document.getElementById('resumen-hide-partial');
+    if (hidePartialCb) {
+        hidePartialCb.checked = state.resumenHidePartial;
+        hidePartialCb.addEventListener('change', () => {
+            state.resumenHidePartial = hidePartialCb.checked;
+            try { localStorage.setItem('resumen-hide-partial', hidePartialCb.checked ? '1' : '0'); } catch (e) {}
+            // Re-render sin refetch (los datos no cambian)
+            loadResumenComparisonOnly();
+        });
+    }
 
     // Selector de granularidad de la comparativa Meta por pais
     $$('.mgran-btn').forEach(btn => {

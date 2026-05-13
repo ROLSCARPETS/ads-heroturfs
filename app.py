@@ -952,6 +952,53 @@ WON_LEAD_STATUSES = (
 )
 
 
+def _period_partial_info(period_key, since_iso, until_iso, granularity):
+    """Para un bucket (semana/mes), calcula si esta parcialmente cubierto por
+    el rango pedido. Devuelve (is_partial, days_covered, days_total).
+
+    Util para marcar visualmente buckets parciales cuando el rango no
+    coincide con bordes naturales (ej. 90 dias = corta el primer mes).
+    """
+    s = date.fromisoformat(since_iso)
+    u = date.fromisoformat(until_iso)
+    k = date.fromisoformat(period_key)
+    if granularity == "daily":
+        return False, 1, 1
+    if granularity == "weekly":
+        natural_start = k
+        natural_end = k + timedelta(days=6)
+    else:  # monthly
+        natural_start = k
+        if k.month == 12:
+            next_m = date(k.year + 1, 1, 1)
+        else:
+            next_m = date(k.year, k.month + 1, 1)
+        natural_end = next_m - timedelta(days=1)
+    covered_start = max(natural_start, s)
+    covered_end = min(natural_end, u)
+    if covered_end < covered_start:
+        return True, 0, (natural_end - natural_start).days + 1
+    days_covered = (covered_end - covered_start).days + 1
+    days_total = (natural_end - natural_start).days + 1
+    return days_covered < days_total, days_covered, days_total
+
+
+def _periods_with_partial_info(since_iso, until_iso, granularity):
+    """Como _generate_periods pero devuelve objetos dict con info de parcialidad
+    para que el frontend pueda marcar visualmente los buckets incompletos."""
+    out = []
+    for k, l in _generate_periods(since_iso, until_iso, granularity):
+        is_partial, days_cov, days_tot = _period_partial_info(k, since_iso, until_iso, granularity)
+        out.append({
+            "key": k,
+            "label": l,
+            "is_partial": is_partial,
+            "days_covered": days_cov,
+            "days_total": days_tot,
+        })
+    return out
+
+
 def _generate_periods(since_iso, until_iso, granularity):
     """Genera lista [(key, label)] de periodos (lunes/primeros de mes/dias) en el rango."""
     s = date.fromisoformat(since_iso)
@@ -2324,7 +2371,7 @@ def api_resumen_comparison():
         "since": since,
         "until": until,
         "granularity": granularity,
-        "periods": [{"key": k, "label": l} for k, l in periods],
+        "periods": _periods_with_partial_info(since, until, granularity),
         "series": {
             "cost": [round(v, 2) for v in cost_total],
             "leads": leads_total,
