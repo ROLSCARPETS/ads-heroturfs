@@ -917,10 +917,16 @@ function buildChannelChart(kind, canvasId, payload, metric, yLabel, formatter, c
     return new Chart(ctx, {
         type: chartType,
         data: { labels, datasets },
+        // Plugin chartjs-plugin-datalabels (cargado via CDN) para mostrar el
+        // valor sobre cada barra/punto. Registrado solo en estos charts para
+        // no afectar a otros (timeseries, top campaigns, etc.).
+        plugins: window.ChartDataLabels ? [window.ChartDataLabels] : [],
         options: {
             responsive: true,
             maintainAspectRatio: false,
             interaction: { mode: 'index', intersect: false },
+            // Mas padding superior para que los labels no se corten arriba
+            layout: { padding: { top: 18 } },
             plugins: {
                 // Ocultamos legend porque ya tenemos los chips arriba
                 legend: { display: false },
@@ -928,6 +934,20 @@ function buildChannelChart(kind, canvasId, payload, metric, yLabel, formatter, c
                     callbacks: {
                         label: (ctx) => `${ctx.dataset.label}: ${formatter(ctx.parsed.y)}`,
                     },
+                },
+                datalabels: {
+                    anchor: 'end',
+                    align: 'top',
+                    offset: 2,
+                    clamp: true,            // evita que labels se salgan del area
+                    font: { size: 10, weight: '600' },
+                    color: (ctx) => ctx.dataset.borderColor || ctx.dataset.backgroundColor || '#334155',
+                    // Oculta el label si el valor es 0/null para no llenar de ceros
+                    display: (ctx) => {
+                        const v = ctx.dataset.data[ctx.dataIndex];
+                        return v !== null && v !== undefined && v !== 0;
+                    },
+                    formatter: (value) => formatter(value),
                 },
             },
             scales: {
