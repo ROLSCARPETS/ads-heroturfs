@@ -1080,8 +1080,8 @@ function renderShoppingComparison(payload, skipChipsRebuild = false) {
         return `
             <tr>
                 <td>${flagImg(c)}<span style="color:${colorForCountry(c)};font-weight:600;">●</span> ${escapeHtml(c)}</td>
-                <td class="td-num">${fmtEur.format(t.cost)} €${deltaTag(d.cost_pct, 'neutral')}</td>
                 <td class="td-num">${budgetDay}${deltaTag(d.daily_budget_pct, 'neutral')}</td>
+                <td class="td-num">${fmtEur.format(t.cost)} €${deltaTag(d.cost_pct, 'neutral')}</td>
                 <td class="td-num">${budgetPer}${deltaTag(d.budget_period_pct, 'neutral')}</td>
                 <td class="td-num">${utilCell}${deltaTag(d.utilization_pct_pct, 'up-good')}</td>
                 <td class="td-num">${fmtInt.format(t.clicks)}${deltaTag(d.clicks_pct, 'up-good')}</td>
@@ -1154,8 +1154,8 @@ function renderShoppingComparison(payload, skipChipsRebuild = false) {
     tfoot.innerHTML = `
         <tr>
             <td>Total (${sorted.length} países)</td>
-            <td class="td-num">${fmtEur.format(sums.cost)} €${deltaTag(dT.cost, 'neutral')}</td>
             <td class="td-num">${budgetDayTot}${deltaTag(dT.daily_budget, 'neutral')}</td>
+            <td class="td-num">${fmtEur.format(sums.cost)} €${deltaTag(dT.cost, 'neutral')}</td>
             <td class="td-num">${budgetPerTot}${deltaTag(dT.budget_period, 'neutral')}</td>
             <td class="td-num">${utilTot}${deltaTag(dT.util, 'up-good')}</td>
             <td class="td-num">${fmtInt.format(sums.clicks)}${deltaTag(dT.clicks, 'up-good')}</td>
