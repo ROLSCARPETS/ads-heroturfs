@@ -2304,33 +2304,32 @@ def api_resumen_comparison():
             if i is not None:
                 _bc_add(leads_bc, r["country"], i, r["c"])
 
-    # Conjunto de paises observados en cualquiera de las metricas. Ordenar por
-    # spend total desc.
+    # Agregar a totales por periodo (suma sobre todos los paises). El Resumen
+    # muestra el global, no por pais (ya se ven los desgloses en otras tabs).
     all_countries = set(spend_bc.keys()) | set(leads_bc.keys())
-    countries = sorted(
-        all_countries,
-        key=lambda c: -sum(spend_bc.get(c, [0] * n)),
-    )
-
-    series = {"cost": {}, "leads": {}, "cpl": {}}
-    for c in countries:
-        cost_vals = spend_bc.get(c) or [0] * n
-        leads_vals = leads_bc.get(c) or [0] * n
-        cpl_vals = [
-            round((cost_vals[i] / leads_vals[i]), 2) if leads_vals[i] > 0 else 0
-            for i in range(n)
-        ]
-        series["cost"][c] = [round(v, 2) for v in cost_vals]
-        series["leads"][c] = leads_vals
-        series["cpl"][c] = cpl_vals
+    cost_total = [0.0] * n
+    leads_total = [0] * n
+    for c in all_countries:
+        vc = spend_bc.get(c) or [0] * n
+        vl = leads_bc.get(c) or [0] * n
+        for i in range(n):
+            cost_total[i] += vc[i] or 0
+            leads_total[i] += vl[i] or 0
+    cpl_total = [
+        round((cost_total[i] / leads_total[i]), 2) if leads_total[i] > 0 else 0
+        for i in range(n)
+    ]
 
     return jsonify({
         "since": since,
         "until": until,
         "granularity": granularity,
         "periods": [{"key": k, "label": l} for k, l in periods],
-        "countries": countries,
-        "series": series,
+        "series": {
+            "cost": [round(v, 2) for v in cost_total],
+            "leads": leads_total,
+            "cpl": cpl_total,
+        },
     })
 
 

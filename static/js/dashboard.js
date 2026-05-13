@@ -867,28 +867,97 @@ async function loadResumenComparisonOnly() {
     }
 }
 
-// Renderiza los 3 charts del top del Resumen (Inversion / Leads / CPL).
-// No tiene chips ni tabla de totales: solo charts.
+// Renderiza los 3 charts del top del Resumen (Inversion / Leads / CPL) con
+// una sola serie agregada (no desglosado por pais).
 function renderResumenComparison(payload) {
-    if (!payload || !payload.countries) return;
+    if (!payload || !payload.series) return;
     const charts = channelCharts.resumen;
-    if (charts.cost) charts.cost.destroy();
+    if (charts.cost)  charts.cost.destroy();
     if (charts.leads) charts.leads.destroy();
-    if (charts.cpl) charts.cpl.destroy();
+    if (charts.cpl)   charts.cpl.destroy();
 
+    const labels = (payload.periods || []).map(p => p.label);
     const fmtEurFn = (v) => fmtEur.format(v || 0) + ' €';
     const fmtIntFn = (v) => fmtInt.format(v || 0);
-    const fmtCplFn = (v) => fmtEur.format(v || 0) + ' €';
 
-    charts.cost  = buildChannelChart('resumen', 'chart-resumen-cost',  payload, 'cost',  'EUR',         fmtEurFn, 'bar');
-    charts.leads = buildChannelChart('resumen', 'chart-resumen-leads', payload, 'leads', 'Leads',       fmtIntFn, 'bar');
-    charts.cpl   = buildChannelChart('resumen', 'chart-resumen-cpl',   payload, 'cpl',   'EUR / lead',  fmtCplFn, 'line');
+    // Hero palette: Navy + Red + Blue como diferenciador visual
+    charts.cost  = buildAggregateChart('chart-resumen-cost',  labels, payload.series.cost  || [], 'EUR',        fmtEurFn, 'bar',  '#005e94');
+    charts.leads = buildAggregateChart('chart-resumen-leads', labels, payload.series.leads || [], 'Leads',      fmtIntFn, 'bar',  '#e3332b');
+    charts.cpl   = buildAggregateChart('chart-resumen-cpl',   labels, payload.series.cpl   || [], 'EUR / lead', fmtEurFn, 'line', '#323f49');
 
     const info = document.getElementById('resumen-info');
     if (info) {
         const granLabel = payload.granularity === 'monthly' ? 'meses' : payload.granularity === 'weekly' ? 'semanas' : 'días';
-        info.textContent = `${payload.periods.length} ${granLabel} · ${payload.since} a ${payload.until} · ${payload.countries.length} países`;
+        info.textContent = `${(payload.periods || []).length} ${granLabel} · ${payload.since} a ${payload.until}`;
     }
+}
+
+// Builder para charts agregados (una sola serie). Usado por el Resumen.
+function buildAggregateChart(canvasId, labels, data, yLabel, formatter, chartType, color) {
+    const canvas = document.getElementById(canvasId);
+    if (!canvas) return null;
+    const ctx = canvas.getContext('2d');
+    const dataset = (chartType === 'bar')
+        ? {
+            label: 'Total',
+            data,
+            backgroundColor: color,
+            borderColor: color,
+            borderWidth: 0,
+            borderRadius: 4,
+            maxBarThickness: 36,
+        }
+        : {
+            label: 'Total',
+            data,
+            borderColor: color,
+            backgroundColor: color + '22',
+            fill: false,
+            tension: 0.3,
+            borderWidth: 2,
+            pointRadius: 3,
+            pointHoverRadius: 6,
+        };
+    return new Chart(ctx, {
+        type: chartType,
+        data: { labels, datasets: [dataset] },
+        plugins: window.ChartDataLabels ? [window.ChartDataLabels] : [],
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            layout: { padding: { top: 18 } },
+            plugins: {
+                legend: { display: false },
+                tooltip: {
+                    callbacks: {
+                        label: (ctx) => formatter(ctx.parsed.y),
+                    },
+                },
+                datalabels: {
+                    anchor: 'end',
+                    align: 'top',
+                    offset: 2,
+                    clamp: true,
+                    font: { size: 11, weight: '600' },
+                    color,
+                    display: (ctx) => {
+                        const v = ctx.dataset.data[ctx.dataIndex];
+                        return v !== null && v !== undefined && v !== 0;
+                    },
+                    formatter: (value) => formatter(value),
+                },
+            },
+            scales: {
+                x: { grid: { display: false }, ticks: { font: { size: 10 } } },
+                y: {
+                    title: { display: true, text: yLabel },
+                    grid: { color: 'rgba(15,23,42,0.05)' },
+                    ticks: { callback: (v) => formatter(v), font: { size: 10 } },
+                    beginAtZero: chartType === 'bar',
+                },
+            },
+        },
+    });
 }
 
 // === Comparativa de canal (Shopping / Search) por pais ===
