@@ -723,8 +723,12 @@ h1, h2, h3 { font-weight: 600; letter-spacing: -0.01em; }
     color: var(--text-muted);
 }
 .weekly-table-wrapper {
-    overflow-x: auto;
+    overflow: auto;
     max-width: 100%;
+    /* Altura limitada => el wrapper es el contenedor scroll y la cabecera
+       puede ser sticky relativa a el. El sticky-header del dashboard sigue
+       arriba, y este wrapper deja espacio razonable debajo. */
+    max-height: calc(100vh - var(--sticky-header-h, 120px) - 80px);
     -webkit-overflow-scrolling: touch;
     position: relative;
     scroll-behavior: smooth;
@@ -774,8 +778,8 @@ h1, h2, h3 { font-weight: 600; letter-spacing: -0.01em; }
 }
 
 /* Sticky vertical de cabeceras de las tablas tipo Excel.
-   --sticky-header-h se actualiza dinamicamente por JS desde la altura
-   real del .sticky-header (topbar + meta-bar + tabs). */
+   El wrapper tiene altura limitada y es el contenedor scroll, asi que
+   el sticky del thead es relativo al wrapper (top:0). */
 :root {
     --sticky-header-h: 120px;
     --year-row-h: 32px;
@@ -783,30 +787,30 @@ h1, h2, h3 { font-weight: 600; letter-spacing: -0.01em; }
 #weekly-table thead th.col-year,
 #shopping-detail-table thead th.col-year {
     position: sticky;
-    top: var(--sticky-header-h);
+    top: 0;
     z-index: 3;
 }
 #weekly-table thead th.col-period,
 #shopping-detail-table thead th.col-period {
     position: sticky;
-    top: calc(var(--sticky-header-h) + var(--year-row-h));
+    top: var(--year-row-h);
     z-index: 3;
     background: var(--bg);
 }
-/* col-label y col-total tienen rowspan=2: usan el top de la fila superior
+/* col-label y col-total tienen rowspan=2: usan top:0 (esquina superior)
    y mayor z-index para taparlo todo al hacer scroll en ambas direcciones */
 #weekly-table thead th.col-label,
 #shopping-detail-table thead th.col-label {
     position: sticky;
     left: 0;
-    top: var(--sticky-header-h);
+    top: 0;
     z-index: 6;
     background: var(--bg);
 }
 #weekly-table thead th.col-total,
 #shopping-detail-table thead th.col-total {
     position: sticky;
-    top: var(--sticky-header-h);
+    top: 0;
     z-index: 5;
 }
 #weekly-table {
