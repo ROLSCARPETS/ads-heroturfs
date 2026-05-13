@@ -642,6 +642,18 @@ h1, h2, h3 { font-weight: 600; letter-spacing: -0.01em; }
     /* Meta gradient: blue Facebook -> magenta Instagram */
     background: linear-gradient(135deg, #0866FF, #C13584);
 }
+/* Badge "BLENDED" en el header de los charts top del Resumen */
+.resumen-blended-badge {
+    background: linear-gradient(135deg, var(--hero-blue), var(--hero-navy));
+    color: #fff;
+    padding: 3px 10px;
+    border-radius: 12px;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    margin-left: auto;
+    margin-right: 12px;
+}
 /* Header de la tarjeta Meta: agrupa toggle + selector de granularidad */
 .meta-header-controls {
     display: flex;
