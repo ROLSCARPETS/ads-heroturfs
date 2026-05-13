@@ -2,20 +2,31 @@
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
 :root {
-    --bg: #f5f7fa;
+    /* === Paleta corporativa Heroturfs (manual de marca) === */
+    --hero-navy: #323f49;
+    --hero-blue: #005e94;
+    --hero-red: #e3332b;
+
+    /* Fondo claro (peticion explicita: NO usar Hero Navy como fondo) */
+    --bg: #f7f9fb;
     --surface: #ffffff;
-    --border: #e3e8ef;
-    --text: #1a1a2e;
+    --border: #dde3ea;
+
+    --text: var(--hero-navy);
     --text-muted: #64748b;
-    --accent: #2563eb;
-    --accent-hover: #1d4ed8;
+
+    /* Color de accion principal: Hero Blue */
+    --accent: var(--hero-blue);
+    --accent-hover: #004876;
+
     --success: #16a34a;
     --warning: #f59e0b;
-    --danger: #dc2626;
+    --danger: var(--hero-red);
     --leads: #7c3aed;
-    --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.05);
-    --shadow: 0 2px 8px rgba(15, 23, 42, 0.06);
-    --shadow-lg: 0 8px 24px rgba(15, 23, 42, 0.08);
+
+    --shadow-sm: 0 1px 2px rgba(50, 63, 73, 0.05);
+    --shadow: 0 2px 8px rgba(50, 63, 73, 0.07);
+    --shadow-lg: 0 8px 24px rgba(50, 63, 73, 0.10);
     --radius: 12px;
     --radius-sm: 8px;
 }
@@ -107,6 +118,14 @@ h1, h2, h3 { font-weight: 600; letter-spacing: -0.01em; }
     color: var(--text-muted);
     margin-top: 2px;
     display: block;
+}
+
+/* Logo Heroturfs en topbar (manual de marca: PNG transparente) */
+.brand-logo {
+    height: 32px;
+    width: auto;
+    display: block;
+    object-fit: contain;
 }
 
 .topbar-right {
@@ -620,7 +639,7 @@ h1, h2, h3 { font-weight: 600; letter-spacing: -0.01em; }
     gap: 12px;
 }
 .section-badge {
-    background: linear-gradient(135deg, #fb923c, #f97316);
+    background: linear-gradient(135deg, var(--hero-red), #c42a23);
     color: #fff;
     padding: 3px 10px;
     border-radius: 12px;
@@ -888,7 +907,7 @@ h1, h2, h3 { font-weight: 600; letter-spacing: -0.01em; }
     background: #fef3c7;
 }
 #weekly-table tbody tr.section-title td {
-    background: linear-gradient(135deg, var(--accent), #1d4ed8);
+    background: linear-gradient(135deg, var(--hero-navy), var(--hero-blue));
     color: #fff;
     font-weight: 700;
     text-transform: uppercase;
@@ -1107,7 +1126,7 @@ h1, h2, h3 { font-weight: 600; letter-spacing: -0.01em; }
 #shopping-detail-table thead th.col-label { background: var(--bg); z-index: 3; }
 /* Section title (bloque por metrica) */
 #shopping-detail-table tbody tr.section-title td {
-    background: linear-gradient(135deg, var(--accent), #1d4ed8);
+    background: linear-gradient(135deg, var(--hero-navy), var(--hero-blue));
     color: #fff;
     font-weight: 700;
     text-transform: uppercase;
@@ -1389,7 +1408,7 @@ tfoot td.td-num {
 }
 
 .chat-toggle {
-    background: linear-gradient(135deg, #7c3aed, #2563eb);
+    background: linear-gradient(135deg, var(--hero-navy), var(--hero-blue));
     color: #fff;
     border: none;
     border-radius: 24px;
@@ -1397,14 +1416,14 @@ tfoot td.td-num {
     font-size: 14px;
     font-weight: 600;
     cursor: pointer;
-    box-shadow: 0 8px 24px rgba(124, 58, 237, 0.35);
+    box-shadow: 0 8px 24px rgba(50, 63, 73, 0.35);
     display: flex;
     align-items: center;
     gap: 8px;
     transition: transform 0.15s, box-shadow 0.15s;
     font-family: inherit;
 }
-.chat-toggle:hover { transform: translateY(-2px); box-shadow: 0 12px 32px rgba(124, 58, 237, 0.45); }
+.chat-toggle:hover { transform: translateY(-2px); box-shadow: 0 12px 32px rgba(0, 94, 148, 0.45); }
 .chat-toggle-icon { font-size: 18px; line-height: 1; }
 .chat-widget.open .chat-toggle { display: none; }
 
@@ -1427,7 +1446,7 @@ tfoot td.td-num {
 .chat-widget.open .chat-panel { display: flex; }
 
 .chat-header {
-    background: linear-gradient(135deg, #7c3aed, #2563eb);
+    background: linear-gradient(135deg, var(--hero-navy), var(--hero-blue));
     color: #fff;
     padding: 14px 16px;
     display: flex;
