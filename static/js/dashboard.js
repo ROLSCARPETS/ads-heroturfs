@@ -1330,13 +1330,21 @@ function renderChannelComparison(kind, payload, skipChipsRebuild = false) {
     if (charts.cpc)  charts.cpc.destroy();
     if (charts.ctr)  charts.ctr.destroy();
 
-    const fmtEurFn = (v) => fmtEur.format(v || 0) + ' €';
-    const fmtCpcFn = (v) => fmtEur.format(v || 0) + ' €';
-    const fmtCtrFn = (v) => (v || 0).toLocaleString('es-ES', { maximumFractionDigits: 2 }) + '%';
+    const fmtEurFn  = (v) => fmtEur.format(v || 0) + ' €';
+    const fmtCpcFn  = (v) => fmtEur.format(v || 0) + ' €';
+    const fmtCtrFn  = (v) => (v || 0).toLocaleString('es-ES', { maximumFractionDigits: 2 }) + '%';
+    const fmtIntFn  = (v) => fmtInt.format(v || 0);
 
     charts.cost = buildChannelChart(kind, cfg.ids.chartCost, payload, 'cost', 'EUR', fmtEurFn, 'bar');
-    charts.cpc  = buildChannelChart(kind, cfg.ids.chartCpc,  payload, 'cpc',  'EUR / click', fmtCpcFn, 'line');
-    charts.ctr  = buildChannelChart(kind, cfg.ids.chartCtr,  payload, 'ctr',  '%', fmtCtrFn, 'line');
+    if (kind === 'meta') {
+        // En Meta los charts 2 y 3 son Leads (HubSpot) y CPL en lugar de CPC/CTR.
+        // Reutilizamos los mismos canvas IDs (chart-meta-cpc / chart-meta-ctr).
+        charts.cpc = buildChannelChart(kind, cfg.ids.chartCpc, payload, 'leads', 'Leads',      fmtIntFn, 'bar');
+        charts.ctr = buildChannelChart(kind, cfg.ids.chartCtr, payload, 'cpl',   'EUR / lead', fmtCpcFn, 'line');
+    } else {
+        charts.cpc = buildChannelChart(kind, cfg.ids.chartCpc, payload, 'cpc', 'EUR / click', fmtCpcFn, 'line');
+        charts.ctr = buildChannelChart(kind, cfg.ids.chartCtr, payload, 'ctr', '%',           fmtCtrFn, 'line');
+    }
 
     // Tabla "tipo Excel" por periodos (debajo de los charts)
     renderChannelDetailTable(kind, payload);
