@@ -642,6 +642,27 @@ h1, h2, h3 { font-weight: 600; letter-spacing: -0.01em; }
     /* Meta gradient: blue Facebook -> magenta Instagram */
     background: linear-gradient(135deg, #0866FF, #C13584);
 }
+/* Header de la tarjeta Meta: agrupa toggle + selector de granularidad */
+.meta-header-controls {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+}
+.meta-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: var(--text-muted);
+    cursor: pointer;
+    user-select: none;
+    white-space: nowrap;
+}
+.meta-toggle input[type="checkbox"] {
+    accent-color: var(--accent);
+    cursor: pointer;
+}
+.meta-toggle:hover { color: var(--text); }
 .google-status-msg {
     color: var(--warning);
     font-size: 12px;

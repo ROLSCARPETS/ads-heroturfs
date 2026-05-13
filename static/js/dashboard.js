@@ -33,6 +33,12 @@ const state = {
     // Drill-down de Meta por ad set (cache por pais + paises expandidos)
     metaAdSetsByCountry: {},
     metaExpandedCountries: new Set(),
+    // Toggle para ocultar campañas "Publicación de Instagram" (LINK_CLICKS)
+    // Default ON: lectura mas limpia del presupuesto de marketing real.
+    metaHideBoosted: (() => {
+        try { return localStorage.getItem('meta-hide-boosted') !== '0'; }
+        catch (e) { return true; }
+    })(),
     alertsPayload: null,      // cache del ultimo payload de alertas para refiltrar por tab
     activeTab: 'resumen',     // pestana activa: resumen | shopping | search | hubspot
 };
@@ -138,8 +144,8 @@ const fetchAlerts = ()     => fetchJson(`/api/alerts${state.country ? '?country=
 const fetchShoppingComparison = () => fetchJson(`/api/google/shopping-comparison?${buildQuery({granularity: state.shoppingGranularity})}`);
 const fetchSearchComparison   = () => fetchJson(`/api/google/search-comparison?${buildQuery({granularity: state.searchGranularity})}`);
 const fetchSearchAdGroups     = (country) => fetchJson(`/api/google/search-ad-groups?${buildQuery({country: country || ''})}`);
-const fetchMetaComparison     = () => fetchJson(`/api/meta/country-comparison?${buildQuery({granularity: state.metaGranularity})}`);
-const fetchMetaAdSets         = (country) => fetchJson(`/api/meta/ad-sets?${buildQuery({country: country || ''})}`);
+const fetchMetaComparison     = () => fetchJson(`/api/meta/country-comparison?${buildQuery({granularity: state.metaGranularity, hide_boosted: state.metaHideBoosted ? '1' : '0'})}`);
+const fetchMetaAdSets         = (country) => fetchJson(`/api/meta/ad-sets?${buildQuery({country: country || '', hide_boosted: state.metaHideBoosted ? '1' : '0'})}`);
 
 // Google Ads APIs
 const fetchGoogleKpis = ()      => fetchJson(`/api/google/kpis?${buildQuery()}`);
@@ -1942,6 +1948,17 @@ function init() {
             loadMetaOnly();
         });
     });
+
+    // Toggle "Ocultar boosted posts" en la pestaña Meta
+    const hideBoostedCb = document.getElementById('meta-hide-boosted');
+    if (hideBoostedCb) {
+        hideBoostedCb.checked = state.metaHideBoosted;
+        hideBoostedCb.addEventListener('change', () => {
+            state.metaHideBoosted = hideBoostedCb.checked;
+            try { localStorage.setItem('meta-hide-boosted', hideBoostedCb.checked ? '1' : '0'); } catch (e) {}
+            loadMetaOnly();
+        });
+    }
 
     setupTableSort();
     setupChannelTableSort('shopping');

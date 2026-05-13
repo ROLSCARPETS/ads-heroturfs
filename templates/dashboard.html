@@ -325,10 +325,16 @@
         <section class="shopping-card">
             <div class="shopping-header">
                 <span id="meta-info" class="weekly-info">-</span>
-                <div class="granularity-selector">
-                    <button class="mgran-btn" data-mgran="daily">D&iacute;a</button>
-                    <button class="mgran-btn active" data-mgran="weekly">Semana</button>
-                    <button class="mgran-btn" data-mgran="monthly">Mes</button>
+                <div class="meta-header-controls">
+                    <label class="meta-toggle" title="Ocultar 'Publicación de Instagram' (boosted posts con objetivo LINK_CLICKS)">
+                        <input type="checkbox" id="meta-hide-boosted" checked>
+                        <span>Ocultar boosted posts</span>
+                    </label>
+                    <div class="granularity-selector">
+                        <button class="mgran-btn" data-mgran="daily">D&iacute;a</button>
+                        <button class="mgran-btn active" data-mgran="weekly">Semana</button>
+                        <button class="mgran-btn" data-mgran="monthly">Mes</button>
+                    </div>
                 </div>
             </div>
             <div id="meta-country-chips" class="shopping-country-chips"></div>

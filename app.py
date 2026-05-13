@@ -1608,6 +1608,11 @@ def api_meta_country_comparison():
     granularity = request.args.get("granularity", "weekly")
     if granularity not in ("daily", "weekly", "monthly"):
         granularity = "weekly"
+    # Toggle de boosted posts: excluye campañas con objective LINK_CLICKS
+    # (las "Publicación de Instagram" boosteadas desde la app), que tienen
+    # presupuestos muy pequeños y suelen ensuciar la lectura de marketing real.
+    hide_boosted = request.args.get("hide_boosted", "0") == "1"
+    boosted_filter = " AND c.objective != 'LINK_CLICKS'" if hide_boosted else ""
 
     since, until, _days = _range_from_request()
     periods = _generate_periods(since, until, granularity)
@@ -1626,7 +1631,7 @@ def api_meta_country_comparison():
                    SUM(i.impressions) impressions
             FROM insights_daily i
             JOIN campaigns c ON c.id = i.campaign_id
-            WHERE i.date BETWEEN ? AND ?
+            WHERE i.date BETWEEN ? AND ?{boosted_filter}
             GROUP BY c.country, period
             ORDER BY c.country, period
             """,
@@ -1642,7 +1647,7 @@ def api_meta_country_comparison():
         # Asi el total del pais = suma de filas del drill-down (cuyo budget
         # se calcula con la misma logica en /api/meta/ad-sets).
         budget_rows = conn.execute(
-            """
+            f"""
             SELECT c.country country,
                    SUM(
                      CASE
@@ -1659,7 +1664,7 @@ def api_meta_country_comparison():
             FROM meta_ad_sets ads
             JOIN campaigns c ON c.id = ads.campaign_id
             WHERE c.effective_status = 'ACTIVE'
-              AND ads.effective_status = 'ACTIVE'
+              AND ads.effective_status = 'ACTIVE'{boosted_filter}
             GROUP BY c.country
             """,
         ).fetchall()
@@ -1730,14 +1735,14 @@ def api_meta_country_comparison():
     prev_days = (date.fromisoformat(prev_until) - date.fromisoformat(prev_since)).days + 1
     with _get_conn() as conn:
         prev_cost_rows = conn.execute(
-            """
+            f"""
             SELECT c.country country,
                    SUM(i.spend) cost,
                    SUM(i.clicks) clicks,
                    SUM(i.impressions) impressions
             FROM insights_daily i
             JOIN campaigns c ON c.id = i.campaign_id
-            WHERE i.date BETWEEN ? AND ?
+            WHERE i.date BETWEEN ? AND ?{boosted_filter}
             GROUP BY c.country
             """,
             (prev_since, prev_until),
@@ -1815,6 +1820,7 @@ def api_meta_ad_sets():
     """
     since, until, _days = _range_from_request()
     country = request.args.get("country") or None
+    hide_boosted = request.args.get("hide_boosted", "0") == "1"
 
     # Effective daily budget por ad set:
     #   - Solo aplica si el ad set sigue ACTIVE (paused -> NULL, se mostrara "-").
@@ -1852,6 +1858,8 @@ def api_meta_ad_sets():
     if country:
         sql += " AND c.country = ?"
         params.append(country)
+    if hide_boosted:
+        sql += " AND c.objective != 'LINK_CLICKS'"
     sql += " GROUP BY ads.id, c.id ORDER BY cost DESC"
 
     with _get_conn() as conn:
