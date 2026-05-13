@@ -904,11 +904,13 @@ function renderResumenComparison(payload) {
 
     const fmtEurFn = (v) => fmtEur.format(v || 0) + ' €';
     const fmtIntFn = (v) => fmtInt.format(v || 0);
+    // Inversion sin decimales (no aporta y los labels se solapan menos)
+    const fmtEurIntFn = (v) => fmtEurBig.format(Math.round(v || 0)) + ' €';
 
     // Hero palette: Blue + Red + Navy
-    charts.cost  = buildAggregateChart('chart-resumen-cost',  periods, costSeries,  'EUR',        fmtEurFn, 'bar',  '#005e94');
-    charts.leads = buildAggregateChart('chart-resumen-leads', periods, leadsSeries, 'Leads',      fmtIntFn, 'bar',  '#e3332b');
-    charts.cpl   = buildAggregateChart('chart-resumen-cpl',   periods, cplSeries,   'EUR / lead', fmtEurFn, 'line', '#323f49');
+    charts.cost  = buildAggregateChart('chart-resumen-cost',  periods, costSeries,  'EUR',        fmtEurIntFn, 'bar',  '#005e94', 10);
+    charts.leads = buildAggregateChart('chart-resumen-leads', periods, leadsSeries, 'Leads',      fmtIntFn,    'bar',  '#e3332b');
+    charts.cpl   = buildAggregateChart('chart-resumen-cpl',   periods, cplSeries,   'EUR / lead', fmtEurFn,    'line', '#323f49');
 
     const info = document.getElementById('resumen-info');
     if (info) {
@@ -925,7 +927,7 @@ function renderResumenComparison(payload) {
 // `periods` es un array de {key, label, is_partial, days_covered, days_total}.
 // Los buckets parciales se renderizan con opacidad reducida + asterisco en
 // el datalabel y tooltip enriquecido.
-function buildAggregateChart(canvasId, periods, data, yLabel, formatter, chartType, color) {
+function buildAggregateChart(canvasId, periods, data, yLabel, formatter, chartType, color, labelFontSize) {
     const canvas = document.getElementById(canvasId);
     if (!canvas) return null;
     const ctx = canvas.getContext('2d');
@@ -987,7 +989,7 @@ function buildAggregateChart(canvasId, periods, data, yLabel, formatter, chartTy
                     align: 'top',
                     offset: 2,
                     clamp: true,
-                    font: { size: 11, weight: '600' },
+                    font: { size: (labelFontSize || 11), weight: '600' },
                     color: (ctx) => periods[ctx.dataIndex] && periods[ctx.dataIndex].is_partial
                         ? colorPartial : colorFull,
                     display: (ctx) => {
