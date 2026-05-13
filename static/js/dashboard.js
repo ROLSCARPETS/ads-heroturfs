@@ -378,6 +378,9 @@ let chartTimeseries = null;
 let chartTopCampaigns = null;
 
 function renderTimeseries(payload) {
+    // El canvas se elimino del Resumen; si no existe, salimos.
+    const canvas = $('#chart-timeseries');
+    if (!canvas) return;
     const granularity = payload.granularity || 'daily';
     const data = payload.data || [];
     const labels = data.map(d => formatPeriodLabel(d.period, granularity));
@@ -388,7 +391,7 @@ function renderTimeseries(payload) {
     const titleEl = $('#chart-timeseries-title');
     if (titleEl) titleEl.textContent = titleMap[granularity] || 'Evolución';
 
-    const ctx = $('#chart-timeseries').getContext('2d');
+    const ctx = canvas.getContext('2d');
     if (chartTimeseries) chartTimeseries.destroy();
     chartTimeseries = new Chart(ctx, {
         type: 'line',
@@ -456,11 +459,14 @@ function renderTimeseries(payload) {
 }
 
 function renderTopCampaigns(campaigns) {
+    // El canvas se elimino del Resumen; si no existe, salimos.
+    const canvas = $('#chart-top-campaigns');
+    if (!canvas) return;
     const top = campaigns.filter(c => c.spend > 0).slice(0, 8);
     const labels = top.map(c => truncate(c.name, 28));
     const spend = top.map(c => c.spend);
 
-    const ctx = $('#chart-top-campaigns').getContext('2d');
+    const ctx = canvas.getContext('2d');
     if (chartTopCampaigns) chartTopCampaigns.destroy();
     chartTopCampaigns = new Chart(ctx, {
         type: 'bar',
