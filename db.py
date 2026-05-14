@@ -269,6 +269,75 @@ CREATE TABLE IF NOT EXISTS google_ad_group_insights_daily (
 );
 CREATE INDEX IF NOT EXISTS idx_g_agi_date ON google_ad_group_insights_daily(date);
 CREATE INDEX IF NOT EXISTS idx_g_agi_campaign ON google_ad_group_insights_daily(campaign_id);
+
+-- ====================================================================
+-- Navision Business Central 14 (Moquetas Rols)
+-- Solo facturas de Heroturfs (filtramos por itemCategoryCode 'HT *')
+-- ====================================================================
+
+-- Maestro de items con flag is_heroturfs (1 si itemCategoryCode empieza por 'HT ').
+CREATE TABLE IF NOT EXISTS navision_items (
+    item_no            TEXT PRIMARY KEY,
+    description        TEXT,
+    item_category_code TEXT,
+    is_heroturfs       INTEGER NOT NULL DEFAULT 0,  -- 1 si HT *
+    base_uom           TEXT,
+    unit_price         REAL,
+    unit_cost          REAL,
+    updated_at         TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_nav_items_heroturfs ON navision_items(is_heroturfs);
+CREATE INDEX IF NOT EXISTS idx_nav_items_category  ON navision_items(item_category_code);
+
+-- Cabecera de factura (1 fila por factura emitida).
+CREATE TABLE IF NOT EXISTS navision_invoices (
+    invoice_no            TEXT PRIMARY KEY,
+    order_no              TEXT,           -- pedido de venta del que viene
+    posting_date          TEXT NOT NULL,  -- ISO YYYY-MM-DD
+    customer_no           TEXT,
+    customer_name         TEXT,
+    sell_country_code     TEXT,           -- ES, FR, DE, ...
+    sell_country          TEXT,           -- 'España', 'Francia', ... (mapeado)
+    salesperson_code      TEXT,
+    amount                REAL,           -- sin IVA, ya con descuentos
+    amount_with_vat       REAL,
+    remaining_amount      REAL,
+    currency_code         TEXT,
+    updated_at            TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_nav_inv_date    ON navision_invoices(posting_date);
+CREATE INDEX IF NOT EXISTS idx_nav_inv_country ON navision_invoices(sell_country);
+
+-- Lineas de factura (n por cada cabecera). Solo guardamos las de Type='Item'
+-- porque son las relevantes para producto. Las de G/L (gastos generales,
+-- portes, etc.) las descartamos en sync.
+CREATE TABLE IF NOT EXISTS navision_invoice_lines (
+    invoice_no    TEXT NOT NULL,
+    line_no       INTEGER NOT NULL,
+    item_no       TEXT,                   -- FK a navision_items.item_no
+    description   TEXT,
+    quantity      REAL,
+    unit_price    REAL,
+    amount        REAL,                   -- sin IVA, despues de descuentos
+    is_heroturfs  INTEGER NOT NULL DEFAULT 0,  -- snapshot al momento del sync
+    PRIMARY KEY (invoice_no, line_no)
+);
+CREATE INDEX IF NOT EXISTS idx_nav_lines_invoice  ON navision_invoice_lines(invoice_no);
+CREATE INDEX IF NOT EXISTS idx_nav_lines_item     ON navision_invoice_lines(item_no);
+CREATE INDEX IF NOT EXISTS idx_nav_lines_heroturf ON navision_invoice_lines(is_heroturfs);
+
+-- Log de syncs (mismo patron que sync_log/google_sync_log).
+CREATE TABLE IF NOT EXISTS navision_sync_log (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    started_at      TEXT NOT NULL,
+    finished_at     TEXT,
+    days_back       INTEGER,
+    items_count     INTEGER,
+    invoices_count  INTEGER,
+    lines_count     INTEGER,
+    status          TEXT,
+    error           TEXT
+);
 """
 
 
@@ -781,6 +850,121 @@ def log_google_sync_finish(conn, sync_id, campaigns_count, insights_count, statu
         WHERE id = ?
         """,
         (campaigns_count, insights_count, status, error, sync_id),
+    )
+
+
+# ====================================================================
+# Navision upserts
+# ====================================================================
+
+def upsert_navision_item(conn, it):
+    """it: dict con item_no, description, item_category_code, base_uom,
+    unit_price, unit_cost. is_heroturfs se calcula automaticamente."""
+    cat = (it.get("item_category_code") or "").strip()
+    is_ht = 1 if cat.upper().startswith("HT ") else 0
+    conn.execute(
+        """
+        INSERT INTO navision_items (item_no, description, item_category_code,
+                                    is_heroturfs, base_uom, unit_price, unit_cost,
+                                    updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
+        ON CONFLICT(item_no) DO UPDATE SET
+            description = excluded.description,
+            item_category_code = excluded.item_category_code,
+            is_heroturfs = excluded.is_heroturfs,
+            base_uom = excluded.base_uom,
+            unit_price = excluded.unit_price,
+            unit_cost = excluded.unit_cost,
+            updated_at = datetime('now')
+        """,
+        (it.get("item_no"), it.get("description"), cat, is_ht,
+         it.get("base_uom"), _to_float(it.get("unit_price")),
+         _to_float(it.get("unit_cost"))),
+    )
+
+
+def upsert_navision_invoice(conn, inv):
+    conn.execute(
+        """
+        INSERT INTO navision_invoices (invoice_no, order_no, posting_date,
+            customer_no, customer_name, sell_country_code, sell_country,
+            salesperson_code, amount, amount_with_vat, remaining_amount,
+            currency_code, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+        ON CONFLICT(invoice_no) DO UPDATE SET
+            order_no = excluded.order_no,
+            posting_date = excluded.posting_date,
+            customer_no = excluded.customer_no,
+            customer_name = excluded.customer_name,
+            sell_country_code = excluded.sell_country_code,
+            sell_country = excluded.sell_country,
+            salesperson_code = excluded.salesperson_code,
+            amount = excluded.amount,
+            amount_with_vat = excluded.amount_with_vat,
+            remaining_amount = excluded.remaining_amount,
+            currency_code = excluded.currency_code,
+            updated_at = datetime('now')
+        """,
+        (inv.get("invoice_no"), inv.get("order_no"), inv.get("posting_date"),
+         inv.get("customer_no"), inv.get("customer_name"),
+         inv.get("sell_country_code"), inv.get("sell_country"),
+         inv.get("salesperson_code"),
+         _to_float(inv.get("amount")), _to_float(inv.get("amount_with_vat")),
+         _to_float(inv.get("remaining_amount")), inv.get("currency_code")),
+    )
+
+
+def upsert_navision_invoice_line(conn, line, ht_items_set=None):
+    """ht_items_set: opcional, set con item_no de items Heroturfs (para tagging
+    rapido sin segundo query). Si no se pasa, hace SELECT a navision_items."""
+    item_no = line.get("item_no")
+    if ht_items_set is not None:
+        is_ht = 1 if item_no in ht_items_set else 0
+    else:
+        row = conn.execute(
+            "SELECT is_heroturfs FROM navision_items WHERE item_no = ?",
+            (item_no,)
+        ).fetchone()
+        is_ht = (row["is_heroturfs"] if row else 0) or 0
+    conn.execute(
+        """
+        INSERT INTO navision_invoice_lines (invoice_no, line_no, item_no,
+            description, quantity, unit_price, amount, is_heroturfs)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(invoice_no, line_no) DO UPDATE SET
+            item_no = excluded.item_no,
+            description = excluded.description,
+            quantity = excluded.quantity,
+            unit_price = excluded.unit_price,
+            amount = excluded.amount,
+            is_heroturfs = excluded.is_heroturfs
+        """,
+        (line.get("invoice_no"), _to_int(line.get("line_no")), item_no,
+         line.get("description"), _to_float(line.get("quantity")),
+         _to_float(line.get("unit_price")), _to_float(line.get("amount")), is_ht),
+    )
+
+
+def log_navision_sync_start(conn, days_back=None):
+    cur = conn.execute(
+        "INSERT INTO navision_sync_log (started_at, days_back, status) "
+        "VALUES (datetime('now'), ?, 'running')",
+        (days_back,),
+    )
+    return cur.lastrowid
+
+
+def log_navision_sync_finish(conn, sync_id, items_count, invoices_count,
+                              lines_count, status, error=None):
+    conn.execute(
+        """
+        UPDATE navision_sync_log
+        SET finished_at = datetime('now'),
+            items_count = ?, invoices_count = ?, lines_count = ?,
+            status = ?, error = ?
+        WHERE id = ?
+        """,
+        (items_count, invoices_count, lines_count, status, error, sync_id),
     )
 
 
