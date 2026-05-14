@@ -2446,6 +2446,24 @@ def _navision_amount_eur_sql(amount_col="l.amount", currency_col="i.currency_cod
     return f"CASE WHEN COALESCE({currency_col},'') IN ('','EUR') THEN {amount_col} ELSE (CASE {currency_col} {cases} ELSE {amount_col} END) END"
 
 
+# CTE 'invoice_ratios' usado en queries de revenue Heroturfs: para cada factura
+# calcula que porcentaje del valor de items son Heroturfs. Asi cuando el Amount
+# de cabecera (que ya incluye descuentos/portes/G-L) se multiplica por ese
+# ratio, los descuentos a nivel factura se prorratean automaticamente.
+# Si la factura tiene SOLO items HT -> ratio=1 -> revenue = Amount cabecera completo.
+# Si es mixta -> revenue HT = Amount cabecera * (items HT / items totales).
+_NAV_RATIOS_CTE = """
+WITH invoice_ratios AS (
+    SELECT invoice_no,
+           CAST(SUM(CASE WHEN is_heroturfs=1 THEN amount ELSE 0 END) AS REAL) /
+             NULLIF(SUM(amount), 0) AS ht_ratio,
+           SUM(CASE WHEN is_heroturfs=1 THEN quantity ELSE 0 END) AS qty_ht
+    FROM navision_invoice_lines
+    GROUP BY invoice_no
+)
+"""
+
+
 @app.route("/api/navision/sales-comparison")
 def api_navision_sales_comparison():
     """Series temporales de revenue Heroturfs FACTURADO en Navision por
@@ -2484,19 +2502,25 @@ def api_navision_sales_comparison():
         if c not in d: d[c] = [0] * n
         d[c][i] += v or 0
 
-    amount_eur = _navision_amount_eur_sql()
+    # Revenue HT = Amount cabecera * ratio HT (prorratea descuentos/portes
+    # a nivel factura). i.posting_date para el bucket, pais_clause en la
+    # cabecera. Filtra a facturas con al menos 1 linea HT (r.ht_ratio > 0).
+    amount_eur_hdr = _navision_amount_eur_sql(amount_col="i.amount",
+                                              currency_col="i.currency_code")
+    pais_inv_clause = " AND i.sell_country = ?" if country else ""
     with _get_conn() as conn:
         rows = conn.execute(
             f"""
+            {_NAV_RATIOS_CTE}
             SELECT i.sell_country country,
-                   {period_expr} period,
-                   SUM({amount_eur}) revenue,
-                   SUM(l.quantity) qty,
-                   COUNT(DISTINCT i.invoice_no) n_inv
-            FROM navision_invoice_lines l
-            JOIN navision_invoices i ON i.invoice_no = l.invoice_no
-            WHERE l.is_heroturfs = 1
-              AND i.posting_date BETWEEN ? AND ?{pais_clause}
+                   {_period_expr(granularity, "i.posting_date")} period,
+                   SUM({amount_eur_hdr} * COALESCE(r.ht_ratio, 0)) revenue,
+                   SUM(COALESCE(r.qty_ht, 0)) qty,
+                   COUNT(DISTINCT CASE WHEN r.ht_ratio > 0 THEN i.invoice_no END) n_inv
+            FROM navision_invoices i
+            LEFT JOIN invoice_ratios r ON r.invoice_no = i.invoice_no
+            WHERE i.posting_date BETWEEN ? AND ?{pais_inv_clause}
+              AND COALESCE(r.ht_ratio, 0) > 0
             GROUP BY i.sell_country, period
             ORDER BY i.sell_country, period
             """,
@@ -2552,16 +2576,20 @@ def api_navision_kpis():
     country = request.args.get("country") or None
 
     def _kpis(since_, until_):
-        amount_eur = _navision_amount_eur_sql()
+        # Revenue HT = Amount cabecera * ratio HT (incluye descuentos/portes
+        # prorrateados). Cuenta solo facturas con al menos 1 linea HT.
+        amount_eur_hdr = _navision_amount_eur_sql(amount_col="i.amount",
+                                                  currency_col="i.currency_code")
         sql = f"""
-            SELECT SUM({amount_eur}) revenue,
-                   SUM(l.quantity) qty,
-                   COUNT(DISTINCT i.invoice_no) n_inv,
-                   COUNT(DISTINCT i.customer_no) n_cust
-            FROM navision_invoice_lines l
-            JOIN navision_invoices i ON i.invoice_no = l.invoice_no
-            WHERE l.is_heroturfs = 1
-              AND i.posting_date BETWEEN ? AND ?
+            {_NAV_RATIOS_CTE}
+            SELECT SUM({amount_eur_hdr} * COALESCE(r.ht_ratio, 0)) revenue,
+                   SUM(COALESCE(r.qty_ht, 0)) qty,
+                   COUNT(DISTINCT CASE WHEN r.ht_ratio > 0 THEN i.invoice_no END) n_inv,
+                   COUNT(DISTINCT CASE WHEN r.ht_ratio > 0 THEN i.customer_no END) n_cust
+            FROM navision_invoices i
+            LEFT JOIN invoice_ratios r ON r.invoice_no = i.invoice_no
+            WHERE i.posting_date BETWEEN ? AND ?
+              AND COALESCE(r.ht_ratio, 0) > 0
         """
         params = [since_, until_]
         if country:
