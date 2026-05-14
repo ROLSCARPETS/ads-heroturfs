@@ -164,6 +164,7 @@ const fetchSearchAdGroups     = (country) => fetchJson(`/api/google/search-ad-gr
 const fetchMetaComparison     = () => fetchJson(`/api/meta/country-comparison?${buildQuery({granularity: state.metaGranularity, boosted_mode: state.metaBoostedMode})}`);
 const fetchMetaAdSets         = (country) => fetchJson(`/api/meta/ad-sets?${buildQuery({country: country || '', boosted_mode: state.metaBoostedMode})}`);
 const fetchResumenComparison  = () => fetchJson(`/api/resumen-comparison?${buildQuery({granularity: state.resumenGranularity})}`);
+const fetchNavisionKpis       = () => fetchJson(`/api/navision/kpis?${buildQuery()}`);
 
 // Google Ads APIs
 const fetchGoogleKpis = ()      => fetchJson(`/api/google/kpis?${buildQuery()}`);
@@ -247,6 +248,44 @@ function renderKpis(k) {
     $('#last-sync').textContent = k.last_sync
         ? `Meta: ${formatDateTimeES(k.last_sync)}`
         : 'Meta: nunca';
+
+    // Cacheamos blended spend para calcular ROAS real cuando llegue el payload
+    // Navision (orden de fetches no garantizado en Promise.all).
+    state.lastBlendedSpend = k.spend || 0;
+    state.lastBlendedSpendPrev = (k.previous && k.previous.spend) || 0;
+    _maybeRenderRoasReal();
+}
+
+// Render KPIs Navision (revenue facturado + ROAS real). Cachea revenue y
+// recalcula ROAS si ya tenemos el blended spend.
+function renderNavisionKpis(k) {
+    if (!k) return;
+    $('#kpi-nav-revenue').textContent = fmtEurBig.format(Math.round(k.revenue || 0));
+    const d = k.deltas || {};
+    const p = k.previous || {};
+    setDelta('delta-nav-revenue', d.revenue_pct, 'revenue', fmtForDelta(p.revenue || 0, 'eur'));
+    state.lastNavRevenue = k.revenue || 0;
+    state.lastNavRevenuePrev = (k.previous && k.previous.revenue) || 0;
+    _maybeRenderRoasReal();
+}
+
+// ROAS real = revenue Navision / spend blended. Calculado en el frontend
+// para no crear otro endpoint que cruce las dos fuentes.
+function _maybeRenderRoasReal() {
+    const rev = state.lastNavRevenue;
+    const spend = state.lastBlendedSpend;
+    const revPrev = state.lastNavRevenuePrev || 0;
+    const spendPrev = state.lastBlendedSpendPrev || 0;
+    if (rev === undefined || spend === undefined) return;
+    const roas = spend > 0 ? (rev / spend) : 0;
+    const roasPrev = spendPrev > 0 ? (revPrev / spendPrev) : 0;
+    $('#kpi-roas-real').textContent = roas > 0
+        ? roas.toLocaleString('es-ES', {minimumFractionDigits: 2, maximumFractionDigits: 2}) + 'x'
+        : '-';
+    const dPct = roasPrev > 0 ? Math.round((roas - roasPrev) / roasPrev * 1000) / 10 : null;
+    setDelta('delta-roas-real', dPct, 'roas', roasPrev > 0
+        ? roasPrev.toLocaleString('es-ES', {minimumFractionDigits: 2, maximumFractionDigits: 2}) + 'x'
+        : '-');
 }
 
 // === HubSpot rendering ===
@@ -626,7 +665,7 @@ async function loadAll() {
     state.metaAdSetsByCountry = {};
     state.metaExpandedCountries = new Set();
     try {
-        const [k, ts, cs, hsK, hsF, hsSrc, hsSt, hsCo, wk, gK, gCs, al, sh, sr, mt, rs] = await Promise.all([
+        const [k, ts, cs, hsK, hsF, hsSrc, hsSt, hsCo, wk, gK, gCs, al, sh, sr, mt, rs, nv] = await Promise.all([
             fetchKpis(), fetchTimeseries(), fetchCampaigns(),
             fetchHsKpis(), fetchHsFunnel(), fetchHsBySource(),
             fetchHsByStatus(), fetchHsByCountry(),
@@ -637,12 +676,14 @@ async function loadAll() {
             fetchSearchComparison(),
             fetchMetaComparison(),
             fetchResumenComparison(),
+            fetchNavisionKpis().catch(() => null),  // navision puede fallar si no hay red al server
         ]);
         renderAlerts(al);
         renderChannelComparison('shopping', sh);
         renderChannelComparison('search', sr);
         renderChannelComparison('meta', mt);
         renderResumenComparison(rs);
+        renderNavisionKpis(nv);
         renderKpis(k);
         renderTimeseries(ts);
         state.campaigns = cs;

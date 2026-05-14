@@ -646,6 +646,9 @@ h1, h2, h3 { font-weight: 600; letter-spacing: -0.01em; }
 .kpi-spend .kpi-value { color: var(--accent); }
 .kpi-leads .kpi-value { color: var(--leads); }
 .kpi-cpl .kpi-value { color: var(--leads); }
+/* KPIs Navision: revenue facturado + ROAS real (verde/oscuro = "dinero de verdad") */
+.kpi-revenue-real .kpi-value { color: var(--success); }
+.kpi-roas-real .kpi-value { color: var(--success); font-size: 28px; }
 
 /* Google Ads KPIs */
 .kpi-google-cost .kpi-value { color: #f97316; }

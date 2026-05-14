@@ -2407,6 +2407,168 @@ def api_resumen_comparison():
     })
 
 
+@app.route("/api/navision/sales-comparison")
+def api_navision_sales_comparison():
+    """Series temporales de revenue Heroturfs FACTURADO en Navision por
+    (pais, periodo). Mismo shape que /api/google/{shopping,search}-comparison
+    para reutilizar el render del frontend.
+
+    Datos: solo lineas Type='Item' de facturas (HistFactAreaPriv) cuyas
+    items tienen itemCategoryCode 'HT *' (marca Heroturfs).
+
+    Filtros: rango de fechas + country (opcional, ya en nombre 'España'/'Francia').
+    """
+    granularity = request.args.get("granularity", "weekly")
+    if granularity not in ("daily", "weekly", "monthly"):
+        granularity = "weekly"
+
+    since, until, _days = _range_from_request()
+    country = request.args.get("country") or None
+
+    periods = _generate_periods(since, until, granularity)
+    period_keys = [p[0] for p in periods]
+    period_idx = {k: i for i, k in enumerate(period_keys)}
+    n = len(periods)
+    # Aqui agrupamos por posting_date de la factura (campo 'date' de la query
+    # debajo). _period_expr usa 'date' por defecto, asi que renombramos.
+    period_expr = _period_expr(granularity, "i.posting_date")
+
+    pais_clause = " AND i.sell_country = ?" if country else ""
+    pais_params = [country] if country else []
+
+    revenue_bc = {}     # {country: [n vals]}
+    invoices_bc = {}    # {country: [n vals]} (count distintas)
+    qty_bc = {}         # {country: [n vals]} (m2)
+
+    def _bc_add(d, c, i, v):
+        if not c: return
+        if c not in d: d[c] = [0] * n
+        d[c][i] += v or 0
+
+    with _get_conn() as conn:
+        rows = conn.execute(
+            f"""
+            SELECT i.sell_country country,
+                   {period_expr} period,
+                   SUM(l.amount) revenue,
+                   SUM(l.quantity) qty,
+                   COUNT(DISTINCT i.invoice_no) n_inv
+            FROM navision_invoice_lines l
+            JOIN navision_invoices i ON i.invoice_no = l.invoice_no
+            WHERE l.is_heroturfs = 1
+              AND i.posting_date BETWEEN ? AND ?{pais_clause}
+            GROUP BY i.sell_country, period
+            ORDER BY i.sell_country, period
+            """,
+            [since, until, *pais_params],
+        ).fetchall()
+        for r in rows:
+            i = period_idx.get(r["period"])
+            if i is None: continue
+            _bc_add(revenue_bc, r["country"], i, r["revenue"])
+            _bc_add(qty_bc, r["country"], i, r["qty"])
+            _bc_add(invoices_bc, r["country"], i, r["n_inv"])
+
+    all_countries = set(revenue_bc.keys())
+    countries = sorted(all_countries, key=lambda c: -sum(revenue_bc.get(c, [0]*n)))
+
+    # Agregado total (suma sobre paises)
+    revenue_total = [0.0] * n
+    qty_total = [0.0] * n
+    invoices_total = [0] * n
+    for c in countries:
+        for i in range(n):
+            revenue_total[i] += (revenue_bc.get(c) or [0]*n)[i]
+            qty_total[i]     += (qty_bc.get(c) or [0]*n)[i]
+            invoices_total[i] += int((invoices_bc.get(c) or [0]*n)[i])
+
+    return jsonify({
+        "since": since,
+        "until": until,
+        "granularity": granularity,
+        "periods": _periods_with_partial_info(since, until, granularity),
+        "countries": countries,
+        "series": {
+            "revenue": [round(v, 2) for v in revenue_total],
+            "quantity": [round(v, 2) for v in qty_total],
+            "invoices": invoices_total,
+        },
+        "by_country": {
+            "revenue": {c: [round(v, 2) for v in revenue_bc.get(c, [0]*n)] for c in countries},
+            "quantity": {c: [round(v, 2) for v in qty_bc.get(c, [0]*n)] for c in countries},
+            "invoices": {c: [int(v) for v in invoices_bc.get(c, [0]*n)] for c in countries},
+        },
+    })
+
+
+@app.route("/api/navision/kpis")
+def api_navision_kpis():
+    """KPIs Navision Heroturfs (totales del rango): revenue, # facturas,
+    # clientes unicos, m2 vendidos, ticket medio. Tambien previous + deltas.
+    Util para tarjetas KPI y para calcular ROAS real (revenue / spend).
+    """
+    since, until, _days = _range_from_request()
+    prev_since, prev_until = _previous_range(since, until)
+    country = request.args.get("country") or None
+
+    def _kpis(since_, until_):
+        sql = """
+            SELECT SUM(l.amount) revenue,
+                   SUM(l.quantity) qty,
+                   COUNT(DISTINCT i.invoice_no) n_inv,
+                   COUNT(DISTINCT i.customer_no) n_cust
+            FROM navision_invoice_lines l
+            JOIN navision_invoices i ON i.invoice_no = l.invoice_no
+            WHERE l.is_heroturfs = 1
+              AND i.posting_date BETWEEN ? AND ?
+        """
+        params = [since_, until_]
+        if country:
+            sql += " AND i.sell_country = ?"
+            params.append(country)
+        with _get_conn() as conn:
+            r = conn.execute(sql, params).fetchone()
+        revenue = r["revenue"] or 0
+        n_inv = r["n_inv"] or 0
+        return {
+            "revenue": round(revenue, 2),
+            "quantity": round(r["qty"] or 0, 2),
+            "invoices": n_inv,
+            "customers": r["n_cust"] or 0,
+            "avg_ticket": round((revenue / n_inv) if n_inv else 0, 2),
+        }
+
+    cur = _kpis(since, until)
+    prev = _kpis(prev_since, prev_until)
+    deltas = {f"{k}_pct": _delta_pct(cur[k], prev[k]) for k in cur}
+
+    # Last sync
+    with _get_conn() as conn:
+        last_sync = conn.execute(
+            "SELECT finished_at FROM navision_sync_log WHERE status = 'ok' "
+            "ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+
+    return jsonify({
+        "since": since, "until": until, "country": country,
+        **cur,
+        "previous": {"since": prev_since, "until": prev_until, **prev},
+        "deltas": deltas,
+        "last_sync": last_sync["finished_at"] if last_sync else None,
+    })
+
+
+@app.route("/api/navision/sync", methods=["POST"])
+def api_navision_sync():
+    """Lanza sync incremental Navision (ultimos 90 dias)."""
+    try:
+        import navision_sync
+        navision_sync.sync()
+        return jsonify({"status": "ok"})
+    except Exception as e:
+        return jsonify({"status": "error", "error": str(e)}), 500
+
+
 @app.route("/api/google/sync", methods=["POST"])
 def api_google_sync():
     """Lanza sync de Google Ads. Devuelve error si falta Developer Token."""
