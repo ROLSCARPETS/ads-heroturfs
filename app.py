@@ -1,5 +1,6 @@
 """Dashboard web Flask para analisis de campanas Meta Ads de Heroturfs."""
 
+import os
 import sqlite3
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -2407,6 +2408,44 @@ def api_resumen_comparison():
     })
 
 
+# === Conversion de divisa Navision a EUR ===
+# BC no expone Amount_LCY en las paginas publicadas. Como solo hay un
+# punado de facturas en moneda extranjera (GBP, ~7 facturas) usamos
+# tasas fijas configurables por .env. Si en el futuro hay mas divisas
+# o fluctuaciones grandes, el usuario actualiza NAVISION_RATES en el .env.
+import re as _re_navision
+def _navision_currency_rates():
+    """Devuelve {currency_code: rate_to_eur}. Lee de NAVISION_RATES env
+    (formato 'GBP:1.17,USD:0.93'). Default conservador: GBP=1.17."""
+    raw = os.getenv("NAVISION_RATES", "GBP:1.17")
+    rates = {}
+    for pair in (raw or "").split(","):
+        pair = pair.strip()
+        if not pair or ":" not in pair:
+            continue
+        code, _, rate = pair.partition(":")
+        code = code.strip().upper()
+        # Validar code (solo letras) para evitar inyeccion
+        if not _re_navision.fullmatch(r"[A-Z]{3}", code):
+            continue
+        try:
+            rates[code] = float(rate)
+        except ValueError:
+            continue
+    return rates
+
+
+def _navision_amount_eur_sql(amount_col="l.amount", currency_col="i.currency_code"):
+    """Devuelve un SQL fragment que convierte amount a EUR usando _navision_currency_rates.
+    EUR (o currency_code vacio) se queda igual."""
+    rates = _navision_currency_rates()
+    if not rates:
+        return amount_col
+    cases = " ".join(f"WHEN '{code}' THEN {amount_col} * {rate}" for code, rate in rates.items())
+    # Si currency_code es NULL/vacio o EUR -> amount_col tal cual.
+    return f"CASE WHEN COALESCE({currency_col},'') IN ('','EUR') THEN {amount_col} ELSE (CASE {currency_col} {cases} ELSE {amount_col} END) END"
+
+
 @app.route("/api/navision/sales-comparison")
 def api_navision_sales_comparison():
     """Series temporales de revenue Heroturfs FACTURADO en Navision por
@@ -2445,12 +2484,13 @@ def api_navision_sales_comparison():
         if c not in d: d[c] = [0] * n
         d[c][i] += v or 0
 
+    amount_eur = _navision_amount_eur_sql()
     with _get_conn() as conn:
         rows = conn.execute(
             f"""
             SELECT i.sell_country country,
                    {period_expr} period,
-                   SUM(l.amount) revenue,
+                   SUM({amount_eur}) revenue,
                    SUM(l.quantity) qty,
                    COUNT(DISTINCT i.invoice_no) n_inv
             FROM navision_invoice_lines l
@@ -2512,8 +2552,9 @@ def api_navision_kpis():
     country = request.args.get("country") or None
 
     def _kpis(since_, until_):
-        sql = """
-            SELECT SUM(l.amount) revenue,
+        amount_eur = _navision_amount_eur_sql()
+        sql = f"""
+            SELECT SUM({amount_eur}) revenue,
                    SUM(l.quantity) qty,
                    COUNT(DISTINCT i.invoice_no) n_inv,
                    COUNT(DISTINCT i.customer_no) n_cust
