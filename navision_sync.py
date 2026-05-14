@@ -105,12 +105,18 @@ def fetch_items(session):
 
 
 def fetch_invoices(session, since_iso):
-    """Cabeceras de facturas con Posting_Date >= since_iso."""
+    """Cabeceras de facturas con Posting_Date >= since_iso.
+
+    Para el pais usamos prioridad Sell_to -> Bill_to -> Ship_to. Algunos
+    clientes solo tienen rellena la direccion de envio (ej. AZACAR SPORTS),
+    asi que mirar solo Sell_to los dejaba como '(sin pais)'.
+    """
     url = f"{BASE_URL}/{_company_path()}/HistFactAreaPriv"
     params = {
         "$select": (
             "No,Order_No,Posting_Date,Sell_to_Customer_No,Sell_to_Customer_Name,"
-            "Sell_to_Country_Region_Code,Salesperson_Code,Amount,Amount_Including_VAT,"
+            "Sell_to_Country_Region_Code,Bill_to_Country_Region_Code,"
+            "Ship_to_Country_Region_Code,Salesperson_Code,Amount,Amount_Including_VAT,"
             "Remaining_Amount,Currency_Code"
         ),
         "$filter": f"Posting_Date ge {since_iso}",
@@ -118,15 +124,22 @@ def fetch_invoices(session, since_iso):
     }
     out = []
     for r in _paginate(session, url, params):
-        country_code = (r.get("Sell_to_Country_Region_Code") or "").strip().upper()
-        country = SUFFIX_TO_COUNTRY.get(country_code) or country_code or None
+        # Prioridad: Sell_to (donde el cliente esta dado de alta) -> Bill_to
+        # (donde se factura) -> Ship_to (donde se envia). Cualquier no-vacio cuenta.
+        sell_c = (r.get("Sell_to_Country_Region_Code") or "").strip().upper()
+        bill_c = (r.get("Bill_to_Country_Region_Code") or "").strip().upper()
+        ship_c = (r.get("Ship_to_Country_Region_Code") or "").strip().upper()
+        country_code = sell_c or bill_c or ship_c or None
+        country = SUFFIX_TO_COUNTRY.get(country_code) if country_code else None
+        if country_code and not country:
+            country = country_code  # codigo no mapeado: dejar el code raw
         out.append({
             "invoice_no": r.get("No"),
             "order_no": r.get("Order_No"),
             "posting_date": r.get("Posting_Date"),
             "customer_no": r.get("Sell_to_Customer_No"),
             "customer_name": r.get("Sell_to_Customer_Name"),
-            "sell_country_code": country_code or None,
+            "sell_country_code": country_code,
             "sell_country": country,
             "salesperson_code": r.get("Salesperson_Code"),
             "amount": r.get("Amount"),
