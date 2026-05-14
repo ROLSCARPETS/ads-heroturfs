@@ -137,6 +137,22 @@ def fetch_invoices(session, since_iso):
     return out
 
 
+def fetch_salespeople(session):
+    """Vendedores distintos a partir de SalesOrdersBySalesPerson (es el unico
+    endpoint accesible que expone code+name juntos). Vendedores historicos
+    sin pedidos abiertos no aparecen aqui pero seguiran como code-only en
+    las queries del dashboard (LEFT JOIN)."""
+    url = f"{BASE_URL}/{_company_path()}/SalesOrdersBySalesPerson"
+    params = {"$select": "SalesPersonCode,SalesPersonName"}
+    seen = {}
+    for r in _paginate(session, url, params):
+        code = (r.get("SalesPersonCode") or "").strip()
+        name = (r.get("SalesPersonName") or "").strip()
+        if code and code not in seen:
+            seen[code] = name or None
+    return seen
+
+
 def fetch_invoice_lines_for(session, invoice_no):
     """Lineas Type='Item' de una factura concreta. Filtra G/L Account, etc."""
     url = f"{BASE_URL}/{_company_path()}/HistLinFactVenAreaPriv"
@@ -175,11 +191,20 @@ def sync(since=None, until=None):
     items_count = 0
     invoices_count = 0
     lines_count = 0
+    salespeople_count = 0
 
     try:
         session = _new_session()
 
-        print("[1/3] Trayendo items (maestro completo)...")
+        print("[0/4] Trayendo vendedores...")
+        sp = fetch_salespeople(session)
+        with db.get_conn() as conn:
+            for code, name in sp.items():
+                db.upsert_navision_salesperson(conn, code, name)
+                salespeople_count += 1
+        print(f"      {salespeople_count} vendedores")
+
+        print("[1/4] Trayendo items (maestro completo)...")
         items = fetch_items(session)
         ht_items = set()
         with db.get_conn() as conn:
@@ -191,7 +216,7 @@ def sync(since=None, until=None):
                 items_count += 1
         print(f"      {items_count} items ({len(ht_items)} marcados como Heroturfs)")
 
-        print(f"[2/3] Trayendo cabeceras de facturas (Posting_Date >= {since_iso})...")
+        print(f"[2/4] Trayendo cabeceras de facturas (Posting_Date >= {since_iso})...")
         invoices = fetch_invoices(session, since_iso)
         with db.get_conn() as conn:
             for inv in invoices:
@@ -199,7 +224,7 @@ def sync(since=None, until=None):
                 invoices_count += 1
         print(f"      {invoices_count} facturas")
 
-        print(f"[3/3] Trayendo lineas de cada factura (solo Type='Item')...")
+        print(f"[3/4] Trayendo lineas de cada factura (solo Type='Item')...")
         # Una query por factura para que el filtro Document_No funcione bien.
         # Lento pero robusto. Para 3000 facturas son ~3k queries; aceptable
         # en sync nocturno. Para incremental (90 dias) son <300 facturas.

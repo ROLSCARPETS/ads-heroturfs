@@ -326,6 +326,15 @@ CREATE INDEX IF NOT EXISTS idx_nav_lines_invoice  ON navision_invoice_lines(invo
 CREATE INDEX IF NOT EXISTS idx_nav_lines_item     ON navision_invoice_lines(item_no);
 CREATE INDEX IF NOT EXISTS idx_nav_lines_heroturf ON navision_invoice_lines(is_heroturfs);
 
+-- Maestro de vendedores (dim pequenia). Se llena desde SalesOrdersBySalesPerson
+-- que es el unico endpoint que expone code+name juntos. Vendedores historicos
+-- que ya no tienen pedidos abiertos no apareceran (ej. I01) -> name=NULL en queries.
+CREATE TABLE IF NOT EXISTS navision_salespeople (
+    code        TEXT PRIMARY KEY,
+    name        TEXT,
+    updated_at  TEXT
+);
+
 -- Log de syncs (mismo patron que sync_log/google_sync_log).
 CREATE TABLE IF NOT EXISTS navision_sync_log (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -942,6 +951,21 @@ def upsert_navision_invoice_line(conn, line, ht_items_set=None):
         (line.get("invoice_no"), _to_int(line.get("line_no")), item_no,
          line.get("description"), _to_float(line.get("quantity")),
          _to_float(line.get("unit_price")), _to_float(line.get("amount")), is_ht),
+    )
+
+
+def upsert_navision_salesperson(conn, code, name):
+    if not code:
+        return
+    conn.execute(
+        """
+        INSERT INTO navision_salespeople (code, name, updated_at)
+        VALUES (?, ?, datetime('now'))
+        ON CONFLICT(code) DO UPDATE SET
+            name = excluded.name,
+            updated_at = datetime('now')
+        """,
+        (code.strip(), (name or "").strip() or None),
     )
 
 
