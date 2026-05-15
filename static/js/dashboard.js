@@ -1983,6 +1983,7 @@ async function doSyncSource(btnId, endpoint, labelOriginal, labelDuring) {
 const doSync = () => doSyncSource('btn-sync', '/api/sync', 'Meta', 'Meta...');
 const doSyncGoogle = () => doSyncSource('btn-sync-google', '/api/google/sync', 'Google', 'Google...');
 const doSyncHs = () => doSyncSource('btn-sync-hs', '/api/hubspot/sync', 'HubSpot', 'HubSpot...');
+const doSyncNav = () => doSyncSource('btn-sync-nav', '/api/navision/sync', 'Navision', 'Navision...');
 
 // === Chatbot ===
 const chatState = { history: [] };
@@ -2251,6 +2252,7 @@ function init() {
     $('#btn-sync').addEventListener('click', doSync);
     $('#btn-sync-google').addEventListener('click', doSyncGoogle);
     $('#btn-sync-hs').addEventListener('click', doSyncHs);
+    $('#btn-sync-nav').addEventListener('click', doSyncNav);
     $('#btn-export').addEventListener('click', exportCsv);
 
     // Selector de pais (dropdown custom para soportar imagenes de banderas)
