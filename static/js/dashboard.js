@@ -225,7 +225,6 @@ function fmtForDelta(value, format) {
 function renderKpis(k) {
     $('#kpi-spend').textContent = fmtEurBig.format(Math.round(k.spend));
     $('#kpi-impressions').textContent = fmtInt.format(k.impressions);
-    $('#kpi-reach').textContent = fmtInt.format(k.reach);
     $('#kpi-clicks').textContent = fmtInt.format(k.clicks);
     $('#kpi-ctr').textContent = k.ctr.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     $('#kpi-cpc').textContent = fmtEur.format(k.cpc);
@@ -237,7 +236,6 @@ function renderKpis(k) {
     const p = k.previous || {};
     setDelta('delta-spend', d.spend_pct, 'spend', fmtForDelta(p.spend || 0, 'eur'));
     setDelta('delta-impressions', d.impressions_pct, 'impressions', fmtForDelta(p.impressions || 0, 'int'));
-    setDelta('delta-reach', d.reach_pct, 'reach', fmtForDelta(p.reach || 0, 'int'));
     setDelta('delta-clicks', d.clicks_pct, 'clicks', fmtForDelta(p.clicks || 0, 'int'));
     setDelta('delta-ctr', d.ctr_pct, 'ctr', fmtForDelta(p.ctr || 0, 'pct'));
     setDelta('delta-cpc', d.cpc_pct, 'cpc', fmtForDelta(p.cpc || 0, 'eur3'));
