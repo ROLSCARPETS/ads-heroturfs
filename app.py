@@ -2492,6 +2492,11 @@ WITH invoice_ratios AS (
 )
 """
 
+# SQL fragment que devuelve +1 para facturas y -1 para abonos. Multiplica
+# el revenue para que abonos resten del neto. doc_type es columna de
+# navision_invoices.
+_NAV_DOC_SIGN_SQL = "(CASE i.doc_type WHEN 'credit_memo' THEN -1 ELSE 1 END)"
+
 
 @app.route("/api/navision/sales-comparison")
 def api_navision_sales_comparison():
@@ -2543,9 +2548,9 @@ def api_navision_sales_comparison():
             {_NAV_RATIOS_CTE}
             SELECT i.sell_country country,
                    {_period_expr(granularity, "i.posting_date")} period,
-                   SUM({amount_eur_hdr} * COALESCE(r.ht_ratio, 0)) revenue,
-                   SUM(COALESCE(r.qty_ht, 0)) qty,
-                   COUNT(DISTINCT CASE WHEN r.ht_ratio > 0 THEN i.invoice_no END) n_inv
+                   SUM({amount_eur_hdr} * COALESCE(r.ht_ratio, 0) * {_NAV_DOC_SIGN_SQL}) revenue,
+                   SUM(COALESCE(r.qty_ht, 0) * {_NAV_DOC_SIGN_SQL}) qty,
+                   COUNT(DISTINCT CASE WHEN r.ht_ratio > 0 AND i.doc_type='invoice' THEN i.invoice_no END) n_inv
             FROM navision_invoices i
             LEFT JOIN invoice_ratios r ON r.invoice_no = i.invoice_no
             WHERE i.posting_date BETWEEN ? AND ?{pais_inv_clause}
@@ -2611,10 +2616,10 @@ def api_navision_kpis():
                                                   currency_col="i.currency_code")
         sql = f"""
             {_NAV_RATIOS_CTE}
-            SELECT SUM({amount_eur_hdr} * COALESCE(r.ht_ratio, 0)) revenue,
-                   SUM(COALESCE(r.qty_ht, 0)) qty,
-                   COUNT(DISTINCT CASE WHEN r.ht_ratio > 0 THEN i.invoice_no END) n_inv,
-                   COUNT(DISTINCT CASE WHEN r.ht_ratio > 0 THEN i.customer_no END) n_cust
+            SELECT SUM({amount_eur_hdr} * COALESCE(r.ht_ratio, 0) * {_NAV_DOC_SIGN_SQL}) revenue,
+                   SUM(COALESCE(r.qty_ht, 0) * {_NAV_DOC_SIGN_SQL}) qty,
+                   COUNT(DISTINCT CASE WHEN r.ht_ratio > 0 AND i.doc_type='invoice' THEN i.invoice_no END) n_inv,
+                   COUNT(DISTINCT CASE WHEN r.ht_ratio > 0 AND i.doc_type='invoice' THEN i.customer_no END) n_cust
             FROM navision_invoices i
             LEFT JOIN invoice_ratios r ON r.invoice_no = i.invoice_no
             WHERE i.posting_date BETWEEN ? AND ?

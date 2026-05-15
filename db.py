@@ -292,6 +292,7 @@ CREATE INDEX IF NOT EXISTS idx_nav_items_category  ON navision_items(item_catego
 -- Cabecera de factura (1 fila por factura emitida).
 CREATE TABLE IF NOT EXISTS navision_invoices (
     invoice_no            TEXT PRIMARY KEY,
+    doc_type              TEXT NOT NULL DEFAULT 'invoice',  -- 'invoice' o 'credit_memo' (abono)
     order_no              TEXT,           -- pedido de venta del que viene
     posting_date          TEXT NOT NULL,  -- ISO YYYY-MM-DD
     customer_no           TEXT,
@@ -299,7 +300,8 @@ CREATE TABLE IF NOT EXISTS navision_invoices (
     sell_country_code     TEXT,           -- ES, FR, DE, ...
     sell_country          TEXT,           -- 'España', 'Francia', ... (mapeado)
     salesperson_code      TEXT,
-    amount                REAL,           -- sin IVA, ya con descuentos
+    amount                REAL,           -- sin IVA. Para credit_memo se almacena positivo
+                                          -- pero conceptualmente RESTA (las queries usan SIGN).
     amount_with_vat       REAL,
     remaining_amount      REAL,
     currency_code         TEXT,
@@ -314,6 +316,7 @@ CREATE INDEX IF NOT EXISTS idx_nav_inv_country ON navision_invoices(sell_country
 CREATE TABLE IF NOT EXISTS navision_invoice_lines (
     invoice_no    TEXT NOT NULL,
     line_no       INTEGER NOT NULL,
+    doc_type      TEXT NOT NULL DEFAULT 'invoice',  -- 'invoice' o 'credit_memo'
     type          TEXT,                   -- 'Item', 'G/L Account', 'Resource', '' (comentario), ...
     item_no       TEXT,                   -- FK a navision_items.item_no si type='Item'
                                           -- Para G/L Account es el numero de cuenta contable
@@ -418,6 +421,13 @@ def _migrate(conn):
     nav_cols = {r["name"] for r in conn.execute("PRAGMA table_info(navision_invoice_lines)").fetchall()}
     if nav_cols and "type" not in nav_cols:
         conn.execute("ALTER TABLE navision_invoice_lines ADD COLUMN type TEXT")
+    # doc_type: 'invoice' o 'credit_memo' (abono). Default invoice por compat.
+    if nav_cols and "doc_type" not in nav_cols:
+        conn.execute("ALTER TABLE navision_invoice_lines ADD COLUMN doc_type TEXT NOT NULL DEFAULT 'invoice'")
+    # Tambien en navision_invoices
+    nav_inv_cols = {r["name"] for r in conn.execute("PRAGMA table_info(navision_invoices)").fetchall()}
+    if nav_inv_cols and "doc_type" not in nav_inv_cols:
+        conn.execute("ALTER TABLE navision_invoices ADD COLUMN doc_type TEXT NOT NULL DEFAULT 'invoice'")
 
 
 def upsert_campaign(conn, c, country=None):
@@ -928,14 +938,18 @@ def upsert_navision_item(conn, it):
 
 
 def upsert_navision_invoice(conn, inv):
+    """inv: dict con campos de la factura. doc_type opcional ('invoice' o
+    'credit_memo'). Default 'invoice' por compatibilidad."""
+    doc_type = inv.get("doc_type") or "invoice"
     conn.execute(
         """
-        INSERT INTO navision_invoices (invoice_no, order_no, posting_date,
+        INSERT INTO navision_invoices (invoice_no, doc_type, order_no, posting_date,
             customer_no, customer_name, sell_country_code, sell_country,
             salesperson_code, amount, amount_with_vat, remaining_amount,
             currency_code, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
         ON CONFLICT(invoice_no) DO UPDATE SET
+            doc_type = excluded.doc_type,
             order_no = excluded.order_no,
             posting_date = excluded.posting_date,
             customer_no = excluded.customer_no,
@@ -949,7 +963,7 @@ def upsert_navision_invoice(conn, inv):
             currency_code = excluded.currency_code,
             updated_at = datetime('now')
         """,
-        (inv.get("invoice_no"), inv.get("order_no"), inv.get("posting_date"),
+        (inv.get("invoice_no"), doc_type, inv.get("order_no"), inv.get("posting_date"),
          inv.get("customer_no"), inv.get("customer_name"),
          inv.get("sell_country_code"), inv.get("sell_country"),
          inv.get("salesperson_code"),
@@ -975,12 +989,14 @@ def upsert_navision_invoice_line(conn, line, ht_items_set=None):
             is_ht = (row["is_heroturfs"] if row else 0) or 0
     else:
         is_ht = 0
+    doc_type = line.get("doc_type") or "invoice"
     conn.execute(
         """
-        INSERT INTO navision_invoice_lines (invoice_no, line_no, type, item_no,
+        INSERT INTO navision_invoice_lines (invoice_no, line_no, doc_type, type, item_no,
             description, quantity, unit_price, amount, is_heroturfs)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(invoice_no, line_no) DO UPDATE SET
+            doc_type = excluded.doc_type,
             type = excluded.type,
             item_no = excluded.item_no,
             description = excluded.description,
@@ -989,7 +1005,7 @@ def upsert_navision_invoice_line(conn, line, ht_items_set=None):
             amount = excluded.amount,
             is_heroturfs = excluded.is_heroturfs
         """,
-        (line.get("invoice_no"), _to_int(line.get("line_no")), line_type, item_no,
+        (line.get("invoice_no"), _to_int(line.get("line_no")), doc_type, line_type, item_no,
          line.get("description"), _to_float(line.get("quantity")),
          _to_float(line.get("unit_price")), _to_float(line.get("amount")), is_ht),
     )

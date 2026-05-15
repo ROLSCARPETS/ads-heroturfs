@@ -222,6 +222,75 @@ def fetch_salespeople(session):
     return seen
 
 
+def fetch_credit_memos(session, since_iso, customers_country_map=None):
+    """Cabeceras de abonos (HistAbVent). Mismo shape que invoices pero con
+    doc_type='credit_memo'. amount se almacena POSITIVO (como BC); el SIGN
+    a la hora de netear revenue lo aplica el query."""
+    customers_country_map = customers_country_map or {}
+    url = f"{BASE_URL}/{_company_path()}/HistAbVent"
+    params = {
+        "$select": (
+            "No,Posting_Date,Sell_to_Customer_No,Sell_to_Customer_Name,"
+            "Sell_to_Country_Region_Code,Bill_to_Country_Region_Code,"
+            "Ship_to_Country_Region_Code,Salesperson_Code,Amount,Amount_Including_VAT,"
+            "Remaining_Amount,Currency_Code"
+        ),
+        "$filter": f"Posting_Date ge {since_iso}",
+        "$orderby": "Posting_Date asc",
+    }
+    out = []
+    for r in _paginate(session, url, params):
+        cust_no = (r.get("Sell_to_Customer_No") or "").strip()
+        master_country = customers_country_map.get(cust_no)
+        sell_c = (r.get("Sell_to_Country_Region_Code") or "").strip().upper()
+        bill_c = (r.get("Bill_to_Country_Region_Code") or "").strip().upper()
+        ship_c = (r.get("Ship_to_Country_Region_Code") or "").strip().upper()
+        country_code = master_country or sell_c or bill_c or ship_c or None
+        country = SUFFIX_TO_COUNTRY.get(country_code) if country_code else None
+        if country_code and not country:
+            country = country_code
+        out.append({
+            "invoice_no": r.get("No"),
+            "doc_type": "credit_memo",
+            "order_no": None,
+            "posting_date": r.get("Posting_Date"),
+            "customer_no": cust_no,
+            "customer_name": r.get("Sell_to_Customer_Name"),
+            "sell_country_code": country_code,
+            "sell_country": country,
+            "salesperson_code": r.get("Salesperson_Code"),
+            "amount": r.get("Amount"),
+            "amount_with_vat": r.get("Amount_Including_VAT"),
+            "remaining_amount": r.get("Remaining_Amount"),
+            "currency_code": r.get("Currency_Code"),
+        })
+    return out
+
+
+def fetch_credit_memo_lines_for(session, credit_memo_no):
+    """Lineas de un abono concreto (HistLinAbVentAreaPriv). Misma estructura
+    que invoice lines pero con doc_type='credit_memo'."""
+    url = f"{BASE_URL}/{_company_path()}/HistLinAbVentAreaPriv"
+    params = {
+        "$select": "Document_No,Line_No,Type,No,Description,Quantity,Unit_Price,Amount",
+        "$filter": f"Document_No eq '{credit_memo_no}'",
+    }
+    out = []
+    for r in _paginate(session, url, params):
+        out.append({
+            "invoice_no": r.get("Document_No"),
+            "doc_type": "credit_memo",
+            "line_no": r.get("Line_No"),
+            "type": r.get("Type"),
+            "item_no": (r.get("No") or "").strip(),
+            "description": (r.get("Description") or "").strip(),
+            "quantity": r.get("Quantity"),
+            "unit_price": r.get("Unit_Price"),
+            "amount": r.get("Amount"),
+        })
+    return out
+
+
 def fetch_invoice_lines_for(session, invoice_no):
     """TODAS las lineas de la factura (Type='Item' + 'G/L Account' + 'Resource' + ...).
     Para revenue HT el filtro is_heroturfs se aplica solo a las Item; las demas
@@ -320,10 +389,7 @@ def sync(since=None, until=None):
                 invoices_count += 1
         print(f"      {invoices_count} facturas")
 
-        print(f"[3/4] Trayendo lineas de cada factura (solo Type='Item')...")
-        # Una query por factura para que el filtro Document_No funcione bien.
-        # Lento pero robusto. Para 3000 facturas son ~3k queries; aceptable
-        # en sync nocturno. Para incremental (90 dias) son <300 facturas.
+        print(f"[3/4] Trayendo lineas de cada factura...")
         with db.get_conn() as conn:
             for i, inv in enumerate(invoices, 1):
                 lines = fetch_invoice_lines_for(session, inv["invoice_no"])
@@ -332,7 +398,29 @@ def sync(since=None, until=None):
                     lines_count += 1
                 if i % 100 == 0:
                     print(f"      {i}/{invoices_count} facturas procesadas | {lines_count} lineas")
-        print(f"      Total lineas Type='Item': {lines_count}")
+        print(f"      Total lineas: {lines_count}")
+
+        # Abonos (credit memos) - HistAbVent + lineas
+        print(f"[3.5/4] Trayendo abonos (credit memos) >= {since_iso}...")
+        credit_memos = fetch_credit_memos(session, since_iso, customers_country_map=customers_country_map)
+        cm_count = 0
+        cm_lines_count = 0
+        with db.get_conn() as conn:
+            for cm in credit_memos:
+                db.upsert_navision_invoice(conn, cm)
+                cm_count += 1
+        print(f"      {cm_count} abonos cabecera")
+        with db.get_conn() as conn:
+            for i, cm in enumerate(credit_memos, 1):
+                lines = fetch_credit_memo_lines_for(session, cm["invoice_no"])
+                for ln in lines:
+                    db.upsert_navision_invoice_line(conn, ln, ht_items_set=ht_items)
+                    cm_lines_count += 1
+                if i % 100 == 0:
+                    print(f"      {i}/{cm_count} abonos procesados | {cm_lines_count} lineas")
+        print(f"      Total lineas abonos: {cm_lines_count}")
+        invoices_count += cm_count
+        lines_count += cm_lines_count
 
         with db.get_conn() as conn:
             db.log_navision_sync_finish(conn, sync_id, items_count, invoices_count,
