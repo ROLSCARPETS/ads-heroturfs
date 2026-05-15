@@ -2476,18 +2476,29 @@ def _navision_amount_eur_sql(amount_col="l.amount", currency_col="i.currency_cod
 # Si es mixta -> revenue HT = Amount cabecera * (items HT / items totales).
 _NAV_RATIOS_CTE = """
 WITH invoice_ratios AS (
-    -- IMPORTANTE: el ratio se calcula SOLO sobre lineas Type='Item' (productos).
-    -- Las lineas G/L (descuentos, portes), Resource, etc. NO entran en el
-    -- denominador porque romperian la formula. Una vez calculado el ratio
-    -- (% productos HT del total productos), se aplica al Amount de cabecera
-    -- que YA incluye todos los descuentos -> descuentos se prorratean
-    -- automaticamente.
+    -- Ratio HT = items HT / items totales. Solo lineas Type='Item' entran
+    -- en el calculo (las G/L de descuentos/portes romperian la formula).
     SELECT invoice_no,
            CAST(SUM(CASE WHEN is_heroturfs=1 THEN amount ELSE 0 END) AS REAL) /
              NULLIF(SUM(amount), 0) AS ht_ratio,
            SUM(CASE WHEN is_heroturfs=1 THEN quantity ELSE 0 END) AS qty_ht
     FROM navision_invoice_lines
     WHERE COALESCE(type, 'Item') = 'Item'
+    GROUP BY invoice_no
+),
+advance_payments AS (
+    -- Cuentas 438xxxx = "Anticipos de clientes" en PGC esp. Cuando un cliente
+    -- paga por adelantado, al facturar se descuenta esa cantidad como linea
+    -- G/L NEGATIVA (importe a pagar adicional baja al neto del anticipo).
+    -- Para el revenue REAL hay que REVERTIR esos descuentos: BC los reporta
+    -- como "Importe Venta" antes del anticipo. Las positivas se dejan (son
+    -- anticipos facturados, no descuentos).
+    SELECT invoice_no,
+           SUM(amount) AS advance_amount  -- sera negativo (anticipos aplicados)
+    FROM navision_invoice_lines
+    WHERE type = 'G/L Account'
+      AND substr(COALESCE(item_no, ''), 1, 3) = '438'
+      AND amount < 0
     GROUP BY invoice_no
 )
 """
@@ -2536,11 +2547,14 @@ def api_navision_sales_comparison():
         if c not in d: d[c] = [0] * n
         d[c][i] += v or 0
 
-    # Revenue HT = Amount cabecera * ratio HT (prorratea descuentos/portes
-    # a nivel factura). i.posting_date para el bucket, pais_clause en la
-    # cabecera. Filtra a facturas con al menos 1 linea HT (r.ht_ratio > 0).
-    amount_eur_hdr = _navision_amount_eur_sql(amount_col="i.amount",
-                                              currency_col="i.currency_code")
+    # Revenue HT = (Amount cabecera - anticipos negativos) * ratio HT.
+    # Los anticipos previos al facturar se aplican como linea G/L negativa
+    # 438xxxx; al restarla obtenemos el revenue REAL bruto (lo que BC
+    # llama "Importe Venta").
+    amount_eur_hdr = _navision_amount_eur_sql(
+        amount_col="(i.amount - COALESCE(a.advance_amount, 0))",
+        currency_col="i.currency_code",
+    )
     pais_inv_clause = " AND i.sell_country = ?" if country else ""
     with _get_conn() as conn:
         rows = conn.execute(
@@ -2553,6 +2567,7 @@ def api_navision_sales_comparison():
                    COUNT(DISTINCT CASE WHEN r.ht_ratio > 0 AND i.doc_type='invoice' THEN i.invoice_no END) n_inv
             FROM navision_invoices i
             LEFT JOIN invoice_ratios r ON r.invoice_no = i.invoice_no
+            LEFT JOIN advance_payments a ON a.invoice_no = i.invoice_no
             WHERE i.posting_date BETWEEN ? AND ?{pais_inv_clause}
               AND COALESCE(r.ht_ratio, 0) > 0
             GROUP BY i.sell_country, period
@@ -2610,10 +2625,11 @@ def api_navision_kpis():
     country = request.args.get("country") or None
 
     def _kpis(since_, until_):
-        # Revenue HT = Amount cabecera * ratio HT (incluye descuentos/portes
-        # prorrateados). Cuenta solo facturas con al menos 1 linea HT.
-        amount_eur_hdr = _navision_amount_eur_sql(amount_col="i.amount",
-                                                  currency_col="i.currency_code")
+        # Revenue HT = (Amount cabecera - anticipos negativos 438xxx) * ratio HT
+        amount_eur_hdr = _navision_amount_eur_sql(
+            amount_col="(i.amount - COALESCE(a.advance_amount, 0))",
+            currency_col="i.currency_code",
+        )
         sql = f"""
             {_NAV_RATIOS_CTE}
             SELECT SUM({amount_eur_hdr} * COALESCE(r.ht_ratio, 0) * {_NAV_DOC_SIGN_SQL}) revenue,
@@ -2622,6 +2638,7 @@ def api_navision_kpis():
                    COUNT(DISTINCT CASE WHEN r.ht_ratio > 0 AND i.doc_type='invoice' THEN i.customer_no END) n_cust
             FROM navision_invoices i
             LEFT JOIN invoice_ratios r ON r.invoice_no = i.invoice_no
+            LEFT JOIN advance_payments a ON a.invoice_no = i.invoice_no
             WHERE i.posting_date BETWEEN ? AND ?
               AND COALESCE(r.ht_ratio, 0) > 0
         """
