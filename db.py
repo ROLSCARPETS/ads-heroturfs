@@ -326,6 +326,19 @@ CREATE INDEX IF NOT EXISTS idx_nav_lines_invoice  ON navision_invoice_lines(invo
 CREATE INDEX IF NOT EXISTS idx_nav_lines_item     ON navision_invoice_lines(item_no);
 CREATE INDEX IF NOT EXISTS idx_nav_lines_heroturf ON navision_invoice_lines(is_heroturfs);
 
+-- Tasas de cambio historicas BC (Power_BI_Tipo_de_cambio).
+-- Cada (currency_code, starting_date) define el rate vigente A PARTIR de
+-- esa fecha hasta el siguiente registro mas reciente. eur_per_unit ya viene
+-- precalculado del sync (= Relational_Exch_Rate_Amount / Exchange_Rate_Amount).
+CREATE TABLE IF NOT EXISTS navision_currency_rates (
+    currency_code   TEXT NOT NULL,
+    starting_date   TEXT NOT NULL,
+    eur_per_unit    REAL NOT NULL,   -- Cuantos EUR vale 1 unidad de la moneda
+    updated_at      TEXT,
+    PRIMARY KEY (currency_code, starting_date)
+);
+CREATE INDEX IF NOT EXISTS idx_nav_rates_lookup ON navision_currency_rates(currency_code, starting_date DESC);
+
 -- Maestro de vendedores (dim pequenia). Se llena desde SalesOrdersBySalesPerson
 -- que es el unico endpoint que expone code+name juntos. Vendedores historicos
 -- que ya no tienen pedidos abiertos no apareceran (ej. I01) -> name=NULL en queries.
@@ -951,6 +964,21 @@ def upsert_navision_invoice_line(conn, line, ht_items_set=None):
         (line.get("invoice_no"), _to_int(line.get("line_no")), item_no,
          line.get("description"), _to_float(line.get("quantity")),
          _to_float(line.get("unit_price")), _to_float(line.get("amount")), is_ht),
+    )
+
+
+def upsert_navision_rate(conn, currency_code, starting_date, eur_per_unit):
+    if not currency_code or not starting_date or eur_per_unit is None:
+        return
+    conn.execute(
+        """
+        INSERT INTO navision_currency_rates (currency_code, starting_date, eur_per_unit, updated_at)
+        VALUES (?, ?, ?, datetime('now'))
+        ON CONFLICT(currency_code, starting_date) DO UPDATE SET
+            eur_per_unit = excluded.eur_per_unit,
+            updated_at = datetime('now')
+        """,
+        (currency_code.strip().upper(), starting_date, float(eur_per_unit)),
     )
 
 

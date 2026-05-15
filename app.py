@@ -2435,15 +2435,37 @@ def _navision_currency_rates():
     return rates
 
 
-def _navision_amount_eur_sql(amount_col="l.amount", currency_col="i.currency_code"):
-    """Devuelve un SQL fragment que convierte amount a EUR usando _navision_currency_rates.
-    EUR (o currency_code vacio) se queda igual."""
-    rates = _navision_currency_rates()
-    if not rates:
-        return amount_col
-    cases = " ".join(f"WHEN '{code}' THEN {amount_col} * {rate}" for code, rate in rates.items())
-    # Si currency_code es NULL/vacio o EUR -> amount_col tal cual.
-    return f"CASE WHEN COALESCE({currency_col},'') IN ('','EUR') THEN {amount_col} ELSE (CASE {currency_col} {cases} ELSE {amount_col} END) END"
+def _navision_amount_eur_sql(amount_col="l.amount", currency_col="i.currency_code",
+                              date_col="i.posting_date"):
+    """SQL fragment que convierte amount a EUR usando la tabla
+    navision_currency_rates poblada desde Power_BI_Tipo_de_cambio.
+    Para cada fila busca el rate de su currency_code vigente en su fecha
+    (ultimo Starting_Date <= fecha). Si no hay rate (porque la BC nunca tuvo
+    ese registro) cae al map de NAVISION_RATES del .env como fallback.
+    EUR/vacio: amount tal cual.
+    """
+    fallback_rates = _navision_currency_rates()
+    fallback_cases = " ".join(
+        f"WHEN '{code}' THEN {amount_col} * {rate}" for code, rate in fallback_rates.items()
+    ) if fallback_rates else ""
+    fallback_sql = (
+        f"(CASE {currency_col} {fallback_cases} ELSE {amount_col} END)"
+        if fallback_cases else amount_col
+    )
+    # COALESCE: usa rate de BBDD si existe; si no, fallback. Si tampoco hay,
+    # multiplica por 1 (lo cual es razonable como ultima red — peor que dejar
+    # el amount como NULL en una agregacion).
+    rate_lookup = (
+        f"(SELECT eur_per_unit FROM navision_currency_rates r "
+        f" WHERE r.currency_code = {currency_col} "
+        f"   AND r.starting_date <= {date_col} "
+        f" ORDER BY r.starting_date DESC LIMIT 1)"
+    )
+    return (
+        f"CASE WHEN COALESCE({currency_col},'') IN ('','EUR') THEN {amount_col} "
+        f"     WHEN ({rate_lookup}) IS NOT NULL THEN {amount_col} * ({rate_lookup}) "
+        f"     ELSE {fallback_sql} END"
+    )
 
 
 # CTE 'invoice_ratios' usado en queries de revenue Heroturfs: para cada factura

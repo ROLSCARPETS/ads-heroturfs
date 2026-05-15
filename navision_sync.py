@@ -150,6 +150,31 @@ def fetch_invoices(session, since_iso):
     return out
 
 
+def fetch_currency_rates(session):
+    """Trae historico de tasas de cambio (Power_BI_Tipo_de_cambio).
+    Calcula eur_per_unit = Relational_Exch_Rate_Amount / Exchange_Rate_Amount
+    para que la conversion en queries sea: amount_local * eur_per_unit = amount_eur.
+
+    BC almacena 'Exchange_Rate_Amount' = unidades de la moneda extranjera por
+    cada Relational_Exch_Rate_Amount EUR. Ej: GBP rate=0.869, rel=1 -> 1 GBP
+    vale 1/0.869 = 1.151 EUR.
+    """
+    url = f"{BASE_URL}/{_company_path()}/Power_BI_Tipo_de_cambio"
+    out = []
+    for r in _paginate(session, url):
+        rate = r.get("Exchange_Rate_Amount")
+        rel = r.get("Relational_Exch_Rate_Amount")
+        if not rate or rate == 0:
+            continue
+        eur_per_unit = (rel or 1) / rate
+        out.append({
+            "currency_code": (r.get("Currency_Code") or "").strip().upper(),
+            "starting_date": r.get("Starting_Date"),
+            "eur_per_unit": eur_per_unit,
+        })
+    return out
+
+
 def fetch_salespeople(session):
     """Vendedores distintos a partir de SalesOrdersBySalesPerson (es el unico
     endpoint accesible que expone code+name juntos). Vendedores historicos
@@ -205,17 +230,29 @@ def sync(since=None, until=None):
     invoices_count = 0
     lines_count = 0
     salespeople_count = 0
+    rates_count = 0
 
     try:
         session = _new_session()
 
-        print("[0/4] Trayendo vendedores...")
+        print("[0/4] Trayendo vendedores + tipos de cambio...")
         sp = fetch_salespeople(session)
         with db.get_conn() as conn:
             for code, name in sp.items():
                 db.upsert_navision_salesperson(conn, code, name)
                 salespeople_count += 1
         print(f"      {salespeople_count} vendedores")
+        try:
+            rates = fetch_currency_rates(session)
+            with db.get_conn() as conn:
+                for rt in rates:
+                    db.upsert_navision_rate(conn, rt["currency_code"],
+                                             rt["starting_date"], rt["eur_per_unit"])
+                    rates_count += 1
+            print(f"      {rates_count} tipos de cambio (todas las divisas, todas las fechas)")
+        except Exception as e:
+            print(f"      [WARN] No se pudo traer Power_BI_Tipo_de_cambio: {e}. "
+                  f"Usaremos fallback NAVISION_RATES de .env si esta definido.")
 
         print("[1/4] Trayendo items (maestro completo)...")
         items = fetch_items(session)
