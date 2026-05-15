@@ -2402,7 +2402,7 @@ def api_resumen_comparison():
     revenue_total = [0.0] * n
     try:
         amount_eur_hdr = _navision_amount_eur_sql(
-            amount_col="(i.amount - COALESCE(a.advance_amount, 0))",
+            amount_col="(i.amount - COALESCE(a.advance_amount, 0) - COALESCE(f.freight_amount, 0))",
             currency_col="i.currency_code",
         )
         period_expr_nav = _period_expr(granularity, "i.posting_date")
@@ -2415,6 +2415,7 @@ def api_resumen_comparison():
                 FROM navision_invoices i
                 LEFT JOIN invoice_ratios r ON r.invoice_no = i.invoice_no
                 LEFT JOIN advance_payments a ON a.invoice_no = i.invoice_no
+                LEFT JOIN freight_amounts f ON f.invoice_no = i.invoice_no
                 WHERE i.posting_date BETWEEN ? AND ?{(" AND i.sell_country = ?") if country else ""}
                   AND COALESCE(r.ht_ratio, 0) > 0
                 GROUP BY period
@@ -2529,18 +2530,28 @@ WITH invoice_ratios AS (
     GROUP BY invoice_no
 ),
 advance_payments AS (
-    -- Cuentas 438xxxx = "Anticipos de clientes" en PGC esp. Cuando un cliente
-    -- paga por adelantado, al facturar se descuenta esa cantidad como linea
-    -- G/L NEGATIVA (importe a pagar adicional baja al neto del anticipo).
-    -- Para el revenue REAL hay que REVERTIR esos descuentos: BC los reporta
-    -- como "Importe Venta" antes del anticipo. Las positivas se dejan (son
-    -- anticipos facturados, no descuentos).
+    -- Cuentas 438xxxx = "Anticipos de clientes" en PGC esp. Lineas G/L
+    -- NEGATIVAS de estas cuentas se aplican como descuento al facturar
+    -- (porque ya se cobro antes). Hay que REVERTIR (sumar al amount) para
+    -- obtener el revenue bruto que reporta BC en 'Importe Venta'.
     SELECT invoice_no,
-           SUM(amount) AS advance_amount  -- sera negativo (anticipos aplicados)
+           SUM(amount) AS advance_amount
     FROM navision_invoice_lines
     WHERE type = 'G/L Account'
       AND substr(COALESCE(item_no, ''), 1, 3) = '438'
       AND amount < 0
+    GROUP BY invoice_no
+),
+freight_amounts AS (
+    -- Cuenta 6240004 = "Gastos transporte recargados al cliente" (recobramos
+    -- al cliente lo que pagamos por transporte). BC NO lo considera revenue.
+    -- En cambio cuenta 7590001 = "Ingresos por servicios de transporte"
+    -- propios SI son revenue para BC, asi que NO se restan.
+    SELECT invoice_no,
+           SUM(amount) AS freight_amount
+    FROM navision_invoice_lines
+    WHERE type = 'G/L Account'
+      AND item_no = '6240004'
     GROUP BY invoice_no
 )
 """
@@ -2594,7 +2605,7 @@ def api_navision_sales_comparison():
     # 438xxxx; al restarla obtenemos el revenue REAL bruto (lo que BC
     # llama "Importe Venta").
     amount_eur_hdr = _navision_amount_eur_sql(
-        amount_col="(i.amount - COALESCE(a.advance_amount, 0))",
+        amount_col="(i.amount - COALESCE(a.advance_amount, 0) - COALESCE(f.freight_amount, 0))",
         currency_col="i.currency_code",
     )
     pais_inv_clause = " AND i.sell_country = ?" if country else ""
@@ -2610,6 +2621,7 @@ def api_navision_sales_comparison():
             FROM navision_invoices i
             LEFT JOIN invoice_ratios r ON r.invoice_no = i.invoice_no
             LEFT JOIN advance_payments a ON a.invoice_no = i.invoice_no
+            LEFT JOIN freight_amounts f ON f.invoice_no = i.invoice_no
             WHERE i.posting_date BETWEEN ? AND ?{pais_inv_clause}
               AND COALESCE(r.ht_ratio, 0) > 0
             GROUP BY i.sell_country, period
@@ -2669,7 +2681,7 @@ def api_navision_kpis():
     def _kpis(since_, until_):
         # Revenue HT = (Amount cabecera - anticipos negativos 438xxx) * ratio HT
         amount_eur_hdr = _navision_amount_eur_sql(
-            amount_col="(i.amount - COALESCE(a.advance_amount, 0))",
+            amount_col="(i.amount - COALESCE(a.advance_amount, 0) - COALESCE(f.freight_amount, 0))",
             currency_col="i.currency_code",
         )
         sql = f"""
@@ -2681,6 +2693,7 @@ def api_navision_kpis():
             FROM navision_invoices i
             LEFT JOIN invoice_ratios r ON r.invoice_no = i.invoice_no
             LEFT JOIN advance_payments a ON a.invoice_no = i.invoice_no
+            LEFT JOIN freight_amounts f ON f.invoice_no = i.invoice_no
             WHERE i.posting_date BETWEEN ? AND ?
               AND COALESCE(r.ht_ratio, 0) > 0
         """
