@@ -328,6 +328,21 @@ CREATE INDEX IF NOT EXISTS idx_nav_lines_invoice  ON navision_invoice_lines(invo
 CREATE INDEX IF NOT EXISTS idx_nav_lines_item     ON navision_invoice_lines(item_no);
 CREATE INDEX IF NOT EXISTS idx_nav_lines_heroturf ON navision_invoice_lines(is_heroturfs);
 
+-- Maestro de clientes Navision (ClientesAreaPriv). Lo usamos como FUENTE
+-- DE VERDAD para el pais (un cliente belga puede facturar a Francia y mi
+-- analisis quiere agruparlo por la nacionalidad del cliente, no por el
+-- destino de la factura).
+CREATE TABLE IF NOT EXISTS navision_customers (
+    customer_no       TEXT PRIMARY KEY,
+    name              TEXT,
+    country_code      TEXT,           -- BE, FR, ES, ...
+    country           TEXT,           -- 'Belgica', 'Francia', ...
+    salesperson_code  TEXT,
+    customer_price_group TEXT,        -- HER_FITN, etc. (utiles para segmentar)
+    updated_at        TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_nav_customers_country ON navision_customers(country);
+
 -- Tasas de cambio historicas BC (Power_BI_Tipo_de_cambio).
 -- Cada (currency_code, starting_date) define el rate vigente A PARTIR de
 -- esa fecha hasta el siguiente registro mas reciente. eur_per_unit ya viene
@@ -977,6 +992,25 @@ def upsert_navision_invoice_line(conn, line, ht_items_set=None):
         (line.get("invoice_no"), _to_int(line.get("line_no")), line_type, item_no,
          line.get("description"), _to_float(line.get("quantity")),
          _to_float(line.get("unit_price")), _to_float(line.get("amount")), is_ht),
+    )
+
+
+def upsert_navision_customer(conn, c):
+    conn.execute(
+        """
+        INSERT INTO navision_customers (customer_no, name, country_code, country,
+            salesperson_code, customer_price_group, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+        ON CONFLICT(customer_no) DO UPDATE SET
+            name = excluded.name,
+            country_code = excluded.country_code,
+            country = excluded.country,
+            salesperson_code = excluded.salesperson_code,
+            customer_price_group = excluded.customer_price_group,
+            updated_at = datetime('now')
+        """,
+        (c.get("customer_no"), c.get("name"), c.get("country_code"),
+         c.get("country"), c.get("salesperson_code"), c.get("customer_price_group")),
     )
 
 

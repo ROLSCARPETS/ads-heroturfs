@@ -104,13 +104,19 @@ def fetch_items(session):
     return out
 
 
-def fetch_invoices(session, since_iso):
+def fetch_invoices(session, since_iso, customers_country_map=None):
     """Cabeceras de facturas con Posting_Date >= since_iso.
 
-    Para el pais usamos prioridad Sell_to -> Bill_to -> Ship_to. Algunos
-    clientes solo tienen rellena la direccion de envio (ej. AZACAR SPORTS),
-    asi que mirar solo Sell_to los dejaba como '(sin pais)'.
+    Pais (prioridad de fuentes):
+      1. Master de cliente (Country_Region_Code en su ficha) - FUENTE DE VERDAD
+      2. Sell_to_Country_Region_Code de la factura (fallback)
+      3. Bill_to / Ship_to de la factura (ultimos fallbacks)
+
+    El #1 garantiza que un cliente belga facturando en Francia se cuente
+    como Belgica (caso KINAXIS). customers_country_map debe ser un dict
+    {customer_no: country_code_str} pre-cargado para evitar query por factura.
     """
+    customers_country_map = customers_country_map or {}
     url = f"{BASE_URL}/{_company_path()}/HistFactAreaPriv"
     params = {
         "$select": (
@@ -124,20 +130,20 @@ def fetch_invoices(session, since_iso):
     }
     out = []
     for r in _paginate(session, url, params):
-        # Prioridad: Sell_to (donde el cliente esta dado de alta) -> Bill_to
-        # (donde se factura) -> Ship_to (donde se envia). Cualquier no-vacio cuenta.
+        cust_no = (r.get("Sell_to_Customer_No") or "").strip()
+        master_country = customers_country_map.get(cust_no)  # del master de cliente
         sell_c = (r.get("Sell_to_Country_Region_Code") or "").strip().upper()
         bill_c = (r.get("Bill_to_Country_Region_Code") or "").strip().upper()
         ship_c = (r.get("Ship_to_Country_Region_Code") or "").strip().upper()
-        country_code = sell_c or bill_c or ship_c or None
+        country_code = master_country or sell_c or bill_c or ship_c or None
         country = SUFFIX_TO_COUNTRY.get(country_code) if country_code else None
         if country_code and not country:
-            country = country_code  # codigo no mapeado: dejar el code raw
+            country = country_code
         out.append({
             "invoice_no": r.get("No"),
             "order_no": r.get("Order_No"),
             "posting_date": r.get("Posting_Date"),
-            "customer_no": r.get("Sell_to_Customer_No"),
+            "customer_no": cust_no,
             "customer_name": r.get("Sell_to_Customer_Name"),
             "sell_country_code": country_code,
             "sell_country": country,
@@ -146,6 +152,31 @@ def fetch_invoices(session, since_iso):
             "amount_with_vat": r.get("Amount_Including_VAT"),
             "remaining_amount": r.get("Remaining_Amount"),
             "currency_code": r.get("Currency_Code"),
+        })
+    return out
+
+
+def fetch_customers(session):
+    """Maestro de clientes (ClientesAreaPriv). Devuelve dict
+    {customer_no: {country_code, country, name, salesperson_code, ...}}
+    para uso rapido al sincronizar facturas + lista para upsert."""
+    url = f"{BASE_URL}/{_company_path()}/ClientesAreaPriv"
+    params = {
+        "$select": "No,Name,Country_Region_Code,Salesperson_Code,Customer_Price_Group",
+    }
+    out = []
+    for r in _paginate(session, url, params):
+        country_code = (r.get("Country_Region_Code") or "").strip().upper()
+        country = SUFFIX_TO_COUNTRY.get(country_code) if country_code else None
+        if country_code and not country:
+            country = country_code  # codigo no mapeado: usar el code raw
+        out.append({
+            "customer_no": (r.get("No") or "").strip(),
+            "name": r.get("Name"),
+            "country_code": country_code or None,
+            "country": country,
+            "salesperson_code": r.get("Salesperson_Code"),
+            "customer_price_group": r.get("Customer_Price_Group"),
         })
     return out
 
@@ -234,11 +265,12 @@ def sync(since=None, until=None):
     lines_count = 0
     salespeople_count = 0
     rates_count = 0
+    customers_count = 0
 
     try:
         session = _new_session()
 
-        print("[0/4] Trayendo vendedores + tipos de cambio...")
+        print("[0/4] Trayendo dimensiones (vendedores, tipos cambio, clientes)...")
         sp = fetch_salespeople(session)
         with db.get_conn() as conn:
             for code, name in sp.items():
@@ -256,6 +288,17 @@ def sync(since=None, until=None):
         except Exception as e:
             print(f"      [WARN] No se pudo traer Power_BI_Tipo_de_cambio: {e}. "
                   f"Usaremos fallback NAVISION_RATES de .env si esta definido.")
+        # Clientes: maestro completo. Lo usamos para sobreescribir el pais
+        # de las facturas (el cliente es la fuente de verdad).
+        customers = fetch_customers(session)
+        customers_country_map = {}
+        with db.get_conn() as conn:
+            for c in customers:
+                db.upsert_navision_customer(conn, c)
+                customers_count += 1
+                if c.get("customer_no") and c.get("country_code"):
+                    customers_country_map[c["customer_no"]] = c["country_code"]
+        print(f"      {customers_count} clientes ({len(customers_country_map)} con pais asignado)")
 
         print("[1/4] Trayendo items (maestro completo)...")
         items = fetch_items(session)
@@ -270,7 +313,7 @@ def sync(since=None, until=None):
         print(f"      {items_count} items ({len(ht_items)} marcados como Heroturfs)")
 
         print(f"[2/4] Trayendo cabeceras de facturas (Posting_Date >= {since_iso})...")
-        invoices = fetch_invoices(session, since_iso)
+        invoices = fetch_invoices(session, since_iso, customers_country_map=customers_country_map)
         with db.get_conn() as conn:
             for inv in invoices:
                 db.upsert_navision_invoice(conn, inv)
