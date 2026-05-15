@@ -2395,6 +2395,46 @@ def api_resumen_comparison():
         for i in range(n)
     ]
 
+    # === Revenue Heroturfs (Navision) por periodo + ROAS Real ===
+    # Busca el revenue facturado HT por bucket usando misma logica que
+    # /api/navision/sales-comparison: SUM(Amount cabecera - anticipos negativos)
+    # * ratio HT * sign (facturas +1, abonos -1).
+    revenue_total = [0.0] * n
+    try:
+        amount_eur_hdr = _navision_amount_eur_sql(
+            amount_col="(i.amount - COALESCE(a.advance_amount, 0))",
+            currency_col="i.currency_code",
+        )
+        period_expr_nav = _period_expr(granularity, "i.posting_date")
+        with _get_conn() as conn:
+            rev_rows = conn.execute(
+                f"""
+                {_NAV_RATIOS_CTE}
+                SELECT {period_expr_nav} period,
+                       SUM({amount_eur_hdr} * COALESCE(r.ht_ratio, 0) * {_NAV_DOC_SIGN_SQL}) revenue
+                FROM navision_invoices i
+                LEFT JOIN invoice_ratios r ON r.invoice_no = i.invoice_no
+                LEFT JOIN advance_payments a ON a.invoice_no = i.invoice_no
+                WHERE i.posting_date BETWEEN ? AND ?{(" AND i.sell_country = ?") if country else ""}
+                  AND COALESCE(r.ht_ratio, 0) > 0
+                GROUP BY period
+                """,
+                ([since, until, country] if country else [since, until]),
+            ).fetchall()
+        for r in rev_rows:
+            i = period_idx.get(r["period"])
+            if i is not None:
+                revenue_total[i] += r["revenue"] or 0
+    except Exception:
+        # Si Navision no esta disponible, dejamos revenue=0 (chart vacio)
+        pass
+
+    # ROAS real = revenue / cost por periodo (0 cuando cost==0 para evitar div/0)
+    roas_total = [
+        round((revenue_total[i] / cost_total[i]), 2) if cost_total[i] > 0 else 0
+        for i in range(n)
+    ]
+
     return jsonify({
         "since": since,
         "until": until,
@@ -2404,6 +2444,8 @@ def api_resumen_comparison():
             "cost": [round(v, 2) for v in cost_total],
             "leads": leads_total,
             "cpl": cpl_total,
+            "revenue": [round(v, 2) for v in revenue_total],
+            "roas": roas_total,
         },
     })
 

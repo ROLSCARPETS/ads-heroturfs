@@ -926,32 +926,43 @@ async function loadResumenComparisonOnly() {
 function renderResumenComparison(payload) {
     if (!payload || !payload.series) return;
     const charts = channelCharts.resumen;
-    if (charts.cost)  charts.cost.destroy();
-    if (charts.leads) charts.leads.destroy();
-    if (charts.cpl)   charts.cpl.destroy();
+    if (charts.cost)    charts.cost.destroy();
+    if (charts.leads)   charts.leads.destroy();
+    if (charts.cpl)     charts.cpl.destroy();
+    if (charts.revenue) charts.revenue.destroy();
+    if (charts.roas)    charts.roas.destroy();
 
     // Filtra periods/series si el toggle "Ocultar parciales" esta activo.
     let periods = payload.periods || [];
     let costSeries = payload.series.cost || [];
     let leadsSeries = payload.series.leads || [];
     let cplSeries = payload.series.cpl || [];
+    let revenueSeries = payload.series.revenue || [];
+    let roasSeries = payload.series.roas || [];
     if (state.resumenHidePartial) {
         const idxKeep = periods.map((p, i) => p.is_partial ? -1 : i).filter(i => i >= 0);
         periods = idxKeep.map(i => periods[i]);
         costSeries = idxKeep.map(i => costSeries[i]);
         leadsSeries = idxKeep.map(i => leadsSeries[i]);
         cplSeries = idxKeep.map(i => cplSeries[i]);
+        revenueSeries = idxKeep.map(i => revenueSeries[i]);
+        roasSeries = idxKeep.map(i => roasSeries[i]);
     }
 
     const fmtEurFn = (v) => fmtEur.format(v || 0) + ' €';
     const fmtIntFn = (v) => fmtInt.format(v || 0);
     // Inversion sin decimales (no aporta y los labels se solapan menos)
     const fmtEurIntFn = (v) => fmtEurBig.format(Math.round(v || 0)) + ' €';
+    // ROAS: 'Xx' con 2 decimales (ej. 11.97x)
+    const fmtRoasFn = (v) => (v || 0).toLocaleString('es-ES', {minimumFractionDigits: 2, maximumFractionDigits: 2}) + 'x';
 
-    // Hero palette: Blue + Red + Navy
-    charts.cost  = buildAggregateChart('chart-resumen-cost',  periods, costSeries,  'EUR',        fmtEurIntFn, 'bar',  '#005e94', 10);
-    charts.leads = buildAggregateChart('chart-resumen-leads', periods, leadsSeries, 'Leads',      fmtIntFn,    'bar',  '#e3332b');
-    charts.cpl   = buildAggregateChart('chart-resumen-cpl',   periods, cplSeries,   'EUR / lead', fmtEurFn,    'line', '#323f49');
+    // Hero/standard palette: Blue (cost), Red (leads), Navy (CPL), Green
+    // (revenue real), Verde oscuro (ROAS real - lo que mas importa)
+    charts.cost    = buildAggregateChart('chart-resumen-cost',    periods, costSeries,    'EUR',        fmtEurIntFn, 'bar',  '#005e94', 10);
+    charts.leads   = buildAggregateChart('chart-resumen-leads',   periods, leadsSeries,   'Leads',      fmtIntFn,    'bar',  '#e3332b');
+    charts.cpl     = buildAggregateChart('chart-resumen-cpl',     periods, cplSeries,     'EUR / lead', fmtEurFn,    'line', '#323f49');
+    charts.revenue = buildAggregateChart('chart-resumen-revenue', periods, revenueSeries, 'EUR',        fmtEurIntFn, 'bar',  '#16a34a', 10);
+    charts.roas    = buildAggregateChart('chart-resumen-roas',    periods, roasSeries,    'x',          fmtRoasFn,   'line', '#15803d');
 
     const info = document.getElementById('resumen-info');
     if (info) {
@@ -1059,7 +1070,7 @@ function buildAggregateChart(canvasId, periods, data, yLabel, formatter, chartTy
 // === Comparativa de canal (Shopping / Search) por pais ===
 // Estructura paralela: un set de DOM IDs prefijado por kind + un slot de charts por kind.
 const channelCharts = {
-    resumen:  { cost: null, leads: null, cpl: null },
+    resumen:  { cost: null, leads: null, cpl: null, revenue: null, roas: null },
     meta:     { cost: null, cpc: null, ctr: null },
     shopping: { cost: null, cpc: null, ctr: null },
     search:   { cost: null, cpc: null, ctr: null },
@@ -2102,6 +2113,7 @@ function setupTabs() {
         setTimeout(() => {
             [chartTimeseries, chartTopCampaigns,
              channelCharts.resumen.cost,  channelCharts.resumen.leads, channelCharts.resumen.cpl,
+             channelCharts.resumen.revenue, channelCharts.resumen.roas,
              channelCharts.shopping.cost, channelCharts.shopping.cpc,  channelCharts.shopping.ctr,
              channelCharts.search.cost,   channelCharts.search.cpc,    channelCharts.search.ctr,
              channelCharts.meta.cost,     channelCharts.meta.cpc,      channelCharts.meta.ctr]

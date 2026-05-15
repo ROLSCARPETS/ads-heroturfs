@@ -1119,7 +1119,9 @@ h1, h2, h3 { font-weight: 600; letter-spacing: -0.01em; }
 
 .shopping-grid {
     display: grid;
-    grid-template-columns: repeat(3, 1fr);
+    /* auto-fit con minimo 320px: en pantallas anchas caben 4-5 columnas;
+       en menos espacio se ajusta a 3 o 2. */
+    grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
     gap: 1px;
     background: var(--border);
 }
