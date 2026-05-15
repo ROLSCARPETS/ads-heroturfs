@@ -2436,6 +2436,45 @@ def api_resumen_comparison():
         for i in range(n)
     ]
 
+    # === Clientes nuevos (primera factura HT en el periodo) + CAC ===
+    # CAC (Customer Acquisition Cost) = spend blended / nuevos clientes Heroturfs
+    # del periodo. Loose attribution (asume que los nuevos del periodo P los
+    # atrae el spend del mismo P).
+    new_customers_total = [0] * n
+    try:
+        period_expr_first = _period_expr(granularity, "first_ht_date")
+        country_clause = " AND cu.country = ?" if country else ""
+        with _get_conn() as conn:
+            new_rows = conn.execute(
+                f"""
+                WITH first_ht_per_customer AS (
+                    SELECT i.customer_no,
+                           MIN(i.posting_date) first_ht_date
+                    FROM navision_invoices i
+                    JOIN navision_invoice_lines l ON l.invoice_no = i.invoice_no
+                    WHERE l.is_heroturfs = 1 AND i.doc_type = 'invoice'
+                    GROUP BY i.customer_no
+                )
+                SELECT {period_expr_first} period, COUNT(*) n
+                FROM first_ht_per_customer fc
+                LEFT JOIN navision_customers cu ON cu.customer_no = fc.customer_no
+                WHERE fc.first_ht_date BETWEEN ? AND ?{country_clause}
+                GROUP BY period
+                """,
+                ([since, until, country] if country else [since, until]),
+            ).fetchall()
+        for r in new_rows:
+            i = period_idx.get(r["period"])
+            if i is not None:
+                new_customers_total[i] += r["n"] or 0
+    except Exception:
+        pass
+
+    cac_total = [
+        round((cost_total[i] / new_customers_total[i]), 2) if new_customers_total[i] > 0 else 0
+        for i in range(n)
+    ]
+
     return jsonify({
         "since": since,
         "until": until,
@@ -2447,6 +2486,8 @@ def api_resumen_comparison():
             "cpl": cpl_total,
             "revenue": [round(v, 2) for v in revenue_total],
             "roas": roas_total,
+            "new_customers": new_customers_total,
+            "cac": cac_total,
         },
     })
 

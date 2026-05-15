@@ -929,6 +929,7 @@ function renderResumenComparison(payload) {
     if (charts.cpl)     charts.cpl.destroy();
     if (charts.revenue) charts.revenue.destroy();
     if (charts.roas)    charts.roas.destroy();
+    if (charts.cac)     charts.cac.destroy();
 
     // Filtra periods/series si el toggle "Ocultar parciales" esta activo.
     let periods = payload.periods || [];
@@ -937,6 +938,7 @@ function renderResumenComparison(payload) {
     let cplSeries = payload.series.cpl || [];
     let revenueSeries = payload.series.revenue || [];
     let roasSeries = payload.series.roas || [];
+    let cacSeries = payload.series.cac || [];
     if (state.resumenHidePartial) {
         const idxKeep = periods.map((p, i) => p.is_partial ? -1 : i).filter(i => i >= 0);
         periods = idxKeep.map(i => periods[i]);
@@ -945,6 +947,7 @@ function renderResumenComparison(payload) {
         cplSeries = idxKeep.map(i => cplSeries[i]);
         revenueSeries = idxKeep.map(i => revenueSeries[i]);
         roasSeries = idxKeep.map(i => roasSeries[i]);
+        cacSeries = idxKeep.map(i => cacSeries[i]);
     }
 
     const fmtEurFn = (v) => fmtEur.format(v || 0) + ' €';
@@ -961,6 +964,8 @@ function renderResumenComparison(payload) {
     charts.cpl     = buildAggregateChart('chart-resumen-cpl',     periods, cplSeries,     'EUR / lead', fmtEurFn,    'line', '#323f49');
     charts.revenue = buildAggregateChart('chart-resumen-revenue', periods, revenueSeries, 'EUR',        fmtEurIntFn, 'bar',  '#16a34a', 10);
     charts.roas    = buildAggregateChart('chart-resumen-roas',    periods, roasSeries,    'x',          fmtRoasFn,   'line', '#15803d');
+    // CAC: linea naranja warning. Lower is better.
+    charts.cac     = buildAggregateChart('chart-resumen-cac',     periods, cacSeries,     'EUR / cliente nuevo', fmtEurFn, 'line', '#f59e0b');
 
     const info = document.getElementById('resumen-info');
     if (info) {
@@ -1068,7 +1073,7 @@ function buildAggregateChart(canvasId, periods, data, yLabel, formatter, chartTy
 // === Comparativa de canal (Shopping / Search) por pais ===
 // Estructura paralela: un set de DOM IDs prefijado por kind + un slot de charts por kind.
 const channelCharts = {
-    resumen:  { cost: null, leads: null, cpl: null, revenue: null, roas: null },
+    resumen:  { cost: null, leads: null, cpl: null, revenue: null, roas: null, cac: null },
     meta:     { cost: null, cpc: null, ctr: null },
     shopping: { cost: null, cpc: null, ctr: null },
     search:   { cost: null, cpc: null, ctr: null },
@@ -2112,7 +2117,7 @@ function setupTabs() {
         setTimeout(() => {
             [chartTimeseries, chartTopCampaigns,
              channelCharts.resumen.cost,  channelCharts.resumen.leads, channelCharts.resumen.cpl,
-             channelCharts.resumen.revenue, channelCharts.resumen.roas,
+             channelCharts.resumen.revenue, channelCharts.resumen.roas, channelCharts.resumen.cac,
              channelCharts.shopping.cost, channelCharts.shopping.cpc,  channelCharts.shopping.ctr,
              channelCharts.search.cost,   channelCharts.search.cpc,    channelCharts.search.ctr,
              channelCharts.meta.cost,     channelCharts.meta.cpc,      channelCharts.meta.ctr]
