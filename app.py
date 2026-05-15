@@ -1153,38 +1153,56 @@ def api_weekly():
             else:
                 leads_other[i] += c
 
-        # 3. Cerrados (clientes ganados) por periodo
-        won_placeholders = ",".join("?" for _ in WON_LEAD_STATUSES)
-        sql = (
-            f"SELECT {period_expr_hs} p, COUNT(*) c FROM hubspot_contacts "
-            f"WHERE createdate BETWEEN ? AND ? AND hs_lead_status IN ({won_placeholders}){pais_clause} "
-            "GROUP BY p"
-        )
-        for r in conn.execute(sql, [since_hs, until_hs, *WON_LEAD_STATUSES, *pais_params]):
+        # 3. Nuevos clientes Heroturfs por periodo (Navision):
+        # Cliente nuevo = aquel cuya PRIMERA factura HT cae en el periodo.
+        # Es la metrica equivalente a "cerrados" pero basada en facturacion
+        # real, no en estados de HubSpot (mucho mas precisa).
+        period_expr_first = _period_expr(granularity, "first_ht_date")
+        nav_country_clause = " AND cu.country = ?" if country else ""
+        sql = f"""
+            WITH first_ht AS (
+                SELECT i.customer_no, MIN(i.posting_date) first_ht_date
+                FROM navision_invoices i
+                JOIN navision_invoice_lines l ON l.invoice_no = i.invoice_no
+                WHERE l.is_heroturfs = 1 AND i.doc_type = 'invoice'
+                GROUP BY i.customer_no
+            )
+            SELECT {period_expr_first} p, COUNT(*) c
+            FROM first_ht fc
+            LEFT JOIN navision_customers cu ON cu.customer_no = fc.customer_no
+            WHERE fc.first_ht_date BETWEEN ? AND ?{nav_country_clause}
+            GROUP BY p
+        """
+        for r in conn.execute(sql, ([since, until, country] if country else [since, until])):
             i = period_idx.get(r["p"])
             if i is not None:
                 cerrados[i] = r["c"]
 
-        # 4. Deals won + revenue por periodo
-        if country:
-            sql = (
-                f"SELECT {period_expr_hs_deal} p, COUNT(DISTINCT d.id) c, COALESCE(SUM(d.amount), 0) rev "
-                "FROM hubspot_deals d "
-                "JOIN hubspot_deal_contacts dc ON dc.deal_id = d.id "
-                "JOIN hubspot_contacts c ON c.id = dc.contact_id "
-                "WHERE d.is_won = 1 AND d.createdate BETWEEN ? AND ? AND c.pais = ? "
-                "GROUP BY p"
-            )
-            params = [since_hs, until_hs, country]
-        else:
-            sql = (
-                f"SELECT {period_expr_hs.replace('createdate', 'createdate')} p, "
-                "COUNT(*) c, COALESCE(SUM(amount), 0) rev "
-                "FROM hubspot_deals WHERE is_won = 1 AND createdate BETWEEN ? AND ? "
-                "GROUP BY p"
-            )
-            params = [since_hs, until_hs]
-        for r in conn.execute(sql, params):
+        # 4. Facturas HT y revenue por periodo (Navision):
+        # - deals_won = count de facturas HT del periodo (= ventas individuales)
+        # - revenue = revenue facturado HT (mismo calculo que en
+        #   /api/navision/kpis: cabecera - anticipos - portes6240004, *ratio,
+        #   con sign para netear abonos).
+        amount_eur_nav = _navision_amount_eur_sql(
+            amount_col="(i.amount - COALESCE(a.advance_amount, 0) - COALESCE(f.freight_amount, 0))",
+            currency_col="i.currency_code",
+        )
+        period_expr_nav = _period_expr(granularity, "i.posting_date")
+        nav_pais_clause = " AND i.sell_country = ?" if country else ""
+        sql = f"""
+            {_NAV_RATIOS_CTE}
+            SELECT {period_expr_nav} p,
+                   COUNT(DISTINCT CASE WHEN i.doc_type='invoice' THEN i.invoice_no END) c,
+                   SUM({amount_eur_nav} * COALESCE(r.ht_ratio, 0) * {_NAV_DOC_SIGN_SQL}) rev
+            FROM navision_invoices i
+            LEFT JOIN invoice_ratios r ON r.invoice_no = i.invoice_no
+            LEFT JOIN advance_payments a ON a.invoice_no = i.invoice_no
+            LEFT JOIN freight_amounts f ON f.invoice_no = i.invoice_no
+            WHERE i.posting_date BETWEEN ? AND ?{nav_pais_clause}
+              AND COALESCE(r.ht_ratio, 0) > 0
+            GROUP BY p
+        """
+        for r in conn.execute(sql, ([since, until, country] if country else [since, until])):
             i = period_idx.get(r["p"])
             if i is not None:
                 deals_won[i] = r["c"]
@@ -1284,30 +1302,41 @@ def api_weekly():
             else:
                 _bc_add(leads_other_bc, r["country"], i, r["c"])
 
-        won_placeholders = ",".join("?" for _ in WON_LEAD_STATUSES)
-        sql = (
-            f"SELECT pais country, {period_expr_hs} p, COUNT(*) c FROM hubspot_contacts "
-            f"WHERE createdate BETWEEN ? AND ? AND hs_lead_status IN ({won_placeholders}){pais_clause} "
-            "GROUP BY pais, p"
-        )
-        for r in conn.execute(sql, [since_hs, until_hs, *WON_LEAD_STATUSES, *pais_params]):
+        # Cerrados por (pais, periodo) - Navision (cliente nuevo HT)
+        sql = f"""
+            WITH first_ht AS (
+                SELECT i.customer_no, MIN(i.posting_date) first_ht_date
+                FROM navision_invoices i
+                JOIN navision_invoice_lines l ON l.invoice_no = i.invoice_no
+                WHERE l.is_heroturfs = 1 AND i.doc_type = 'invoice'
+                GROUP BY i.customer_no
+            )
+            SELECT cu.country country, {period_expr_first} p, COUNT(*) c
+            FROM first_ht fc
+            LEFT JOIN navision_customers cu ON cu.customer_no = fc.customer_no
+            WHERE fc.first_ht_date BETWEEN ? AND ?{nav_country_clause}
+            GROUP BY cu.country, p
+        """
+        for r in conn.execute(sql, ([since, until, country] if country else [since, until])):
             i = period_idx.get(r["p"])
             if i is None: continue
             _bc_add(cerrados_bc, r["country"], i, r["c"])
 
-        # Deals ganados + revenue por (pais, periodo): join via contacts
-        sql = (
-            f"SELECT c.pais country, {period_expr_hs_deal} p, "
-            "COUNT(DISTINCT d.id) c, COALESCE(SUM(d.amount), 0) rev "
-            "FROM hubspot_deals d "
-            "JOIN hubspot_deal_contacts dc ON dc.deal_id = d.id "
-            "JOIN hubspot_contacts c ON c.id = dc.contact_id "
-            "WHERE d.is_won = 1 AND d.createdate BETWEEN ? AND ?"
-            + (" AND c.pais = ?" if country else "")
-            + " GROUP BY c.pais, p"
-        )
-        params = [since_hs, until_hs] + ([country] if country else [])
-        for r in conn.execute(sql, params):
+        # Deals (= num facturas HT) y revenue por (pais, periodo) - Navision
+        sql = f"""
+            {_NAV_RATIOS_CTE}
+            SELECT i.sell_country country, {period_expr_nav} p,
+                   COUNT(DISTINCT CASE WHEN i.doc_type='invoice' THEN i.invoice_no END) c,
+                   SUM({amount_eur_nav} * COALESCE(r.ht_ratio, 0) * {_NAV_DOC_SIGN_SQL}) rev
+            FROM navision_invoices i
+            LEFT JOIN invoice_ratios r ON r.invoice_no = i.invoice_no
+            LEFT JOIN advance_payments a ON a.invoice_no = i.invoice_no
+            LEFT JOIN freight_amounts f ON f.invoice_no = i.invoice_no
+            WHERE i.posting_date BETWEEN ? AND ?{nav_pais_clause}
+              AND COALESCE(r.ht_ratio, 0) > 0
+            GROUP BY i.sell_country, p
+        """
+        for r in conn.execute(sql, ([since, until, country] if country else [since, until])):
             i = period_idx.get(r["p"])
             if i is None: continue
             _bc_add(deals_won_bc, r["country"], i, r["c"])
@@ -1406,9 +1435,9 @@ def api_weekly():
             ],
         },
         {
-            "title": "Conversion",
+            "title": "Conversión (Navision)",
             "rows": [
-                row("Cerrados (convertidos en cliente)", cerrados, sum_cerrados, "int",
+                row("Clientes nuevos Heroturfs", cerrados, sum_cerrados, "int",
                     by_country=_by_country(cerrados_bc)),
                 row("Tasa de éxito (Lead -> Cliente)", tasa_exito, tot_tasa, "pct",
                     by_country=_by_country(tasa_exito_bc, totals_func=tasa_country)),
@@ -1417,11 +1446,11 @@ def api_weekly():
             ],
         },
         {
-            "title": "Revenue (Ventas netas HubSpot)",
+            "title": "Revenue (Navision · Heroturfs)",
             "rows": [
-                row("Ventas netas", revenue, sum_revenue, "eur", header=True,
+                row("Ingresos facturados", revenue, sum_revenue, "eur", header=True,
                     by_country=_by_country(revenue_bc)),
-                row("Deals ganados", deals_won, sum(deals_won), "int", indent=True,
+                row("Facturas HT emitidas", deals_won, sum(deals_won), "int", indent=True,
                     by_country=_by_country(deals_won_bc)),
                 row("ROAS (Revenue / Inversión)", roas, tot_roas, "x",
                     by_country=_by_country(roas_bc, totals_func=roas_country)),
