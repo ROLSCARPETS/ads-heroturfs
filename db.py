@@ -314,12 +314,14 @@ CREATE INDEX IF NOT EXISTS idx_nav_inv_country ON navision_invoices(sell_country
 CREATE TABLE IF NOT EXISTS navision_invoice_lines (
     invoice_no    TEXT NOT NULL,
     line_no       INTEGER NOT NULL,
-    item_no       TEXT,                   -- FK a navision_items.item_no
+    type          TEXT,                   -- 'Item', 'G/L Account', 'Resource', '' (comentario), ...
+    item_no       TEXT,                   -- FK a navision_items.item_no si type='Item'
+                                          -- Para G/L Account es el numero de cuenta contable
     description   TEXT,
     quantity      REAL,
     unit_price    REAL,
-    amount        REAL,                   -- sin IVA, despues de descuentos
-    is_heroturfs  INTEGER NOT NULL DEFAULT 0,  -- snapshot al momento del sync
+    amount        REAL,                   -- sin IVA, despues de descuentos (puede ser negativo)
+    is_heroturfs  INTEGER NOT NULL DEFAULT 0,  -- snapshot. Solo aplica a type='Item'.
     PRIMARY KEY (invoice_no, line_no)
 );
 CREATE INDEX IF NOT EXISTS idx_nav_lines_invoice  ON navision_invoice_lines(invoice_no);
@@ -396,6 +398,11 @@ def _migrate(conn):
         conn.execute("ALTER TABLE google_campaigns ADD COLUMN daily_budget REAL")
     if g_cols and "budget_period" not in g_cols:
         conn.execute("ALTER TABLE google_campaigns ADD COLUMN budget_period TEXT")
+
+    # Navision invoice lines: anadir 'type' (G/L Account / Item / Resource / ...)
+    nav_cols = {r["name"] for r in conn.execute("PRAGMA table_info(navision_invoice_lines)").fetchall()}
+    if nav_cols and "type" not in nav_cols:
+        conn.execute("ALTER TABLE navision_invoice_lines ADD COLUMN type TEXT")
 
 
 def upsert_campaign(conn, c, country=None):
@@ -938,22 +945,28 @@ def upsert_navision_invoice(conn, inv):
 
 def upsert_navision_invoice_line(conn, line, ht_items_set=None):
     """ht_items_set: opcional, set con item_no de items Heroturfs (para tagging
-    rapido sin segundo query). Si no se pasa, hace SELECT a navision_items."""
+    rapido sin segundo query). is_heroturfs solo aplica si type='Item'.
+    Lineas no-Item (G/L Account, Resource, comentario) siempre son is_ht=0."""
     item_no = line.get("item_no")
-    if ht_items_set is not None:
-        is_ht = 1 if item_no in ht_items_set else 0
+    line_type = (line.get("type") or "").strip()
+    if line_type == "Item":
+        if ht_items_set is not None:
+            is_ht = 1 if item_no in ht_items_set else 0
+        else:
+            row = conn.execute(
+                "SELECT is_heroturfs FROM navision_items WHERE item_no = ?",
+                (item_no,)
+            ).fetchone()
+            is_ht = (row["is_heroturfs"] if row else 0) or 0
     else:
-        row = conn.execute(
-            "SELECT is_heroturfs FROM navision_items WHERE item_no = ?",
-            (item_no,)
-        ).fetchone()
-        is_ht = (row["is_heroturfs"] if row else 0) or 0
+        is_ht = 0
     conn.execute(
         """
-        INSERT INTO navision_invoice_lines (invoice_no, line_no, item_no,
+        INSERT INTO navision_invoice_lines (invoice_no, line_no, type, item_no,
             description, quantity, unit_price, amount, is_heroturfs)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(invoice_no, line_no) DO UPDATE SET
+            type = excluded.type,
             item_no = excluded.item_no,
             description = excluded.description,
             quantity = excluded.quantity,
@@ -961,7 +974,7 @@ def upsert_navision_invoice_line(conn, line, ht_items_set=None):
             amount = excluded.amount,
             is_heroturfs = excluded.is_heroturfs
         """,
-        (line.get("invoice_no"), _to_int(line.get("line_no")), item_no,
+        (line.get("invoice_no"), _to_int(line.get("line_no")), line_type, item_no,
          line.get("description"), _to_float(line.get("quantity")),
          _to_float(line.get("unit_price")), _to_float(line.get("amount")), is_ht),
     )

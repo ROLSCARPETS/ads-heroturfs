@@ -2476,11 +2476,18 @@ def _navision_amount_eur_sql(amount_col="l.amount", currency_col="i.currency_cod
 # Si es mixta -> revenue HT = Amount cabecera * (items HT / items totales).
 _NAV_RATIOS_CTE = """
 WITH invoice_ratios AS (
+    -- IMPORTANTE: el ratio se calcula SOLO sobre lineas Type='Item' (productos).
+    -- Las lineas G/L (descuentos, portes), Resource, etc. NO entran en el
+    -- denominador porque romperian la formula. Una vez calculado el ratio
+    -- (% productos HT del total productos), se aplica al Amount de cabecera
+    -- que YA incluye todos los descuentos -> descuentos se prorratean
+    -- automaticamente.
     SELECT invoice_no,
            CAST(SUM(CASE WHEN is_heroturfs=1 THEN amount ELSE 0 END) AS REAL) /
              NULLIF(SUM(amount), 0) AS ht_ratio,
            SUM(CASE WHEN is_heroturfs=1 THEN quantity ELSE 0 END) AS qty_ht
     FROM navision_invoice_lines
+    WHERE COALESCE(type, 'Item') = 'Item'
     GROUP BY invoice_no
 )
 """

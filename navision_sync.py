@@ -192,17 +192,20 @@ def fetch_salespeople(session):
 
 
 def fetch_invoice_lines_for(session, invoice_no):
-    """Lineas Type='Item' de una factura concreta. Filtra G/L Account, etc."""
+    """TODAS las lineas de la factura (Type='Item' + 'G/L Account' + 'Resource' + ...).
+    Para revenue HT el filtro is_heroturfs se aplica solo a las Item; las demas
+    son visibles para auditoria (descuentos, transportes, comisiones)."""
     url = f"{BASE_URL}/{_company_path()}/HistLinFactVenAreaPriv"
     params = {
-        "$select": "Document_No,Line_No,No,Description,Quantity,Unit_Price,Amount",
-        "$filter": f"Document_No eq '{invoice_no}' and Type eq 'Item'",
+        "$select": "Document_No,Line_No,Type,No,Description,Quantity,Unit_Price,Amount",
+        "$filter": f"Document_No eq '{invoice_no}'",
     }
     out = []
     for r in _paginate(session, url, params):
         out.append({
             "invoice_no": r.get("Document_No"),
             "line_no": r.get("Line_No"),
+            "type": r.get("Type"),
             "item_no": (r.get("No") or "").strip(),
             "description": (r.get("Description") or "").strip(),
             "quantity": r.get("Quantity"),
