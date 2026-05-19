@@ -6,6 +6,13 @@
     --hero-navy: #323f49;
     --hero-blue: #005e94;
     --hero-red: #e3332b;
+    /* Paleta extendida Heroturfs: variaciones tonales para charts con
+       multiples series, manteniendo coherencia con la marca. */
+    --hero-blue-light: #4f9bcb;   /* azul claro (CAC, metricas coste secundarias) */
+    --hero-red-dark:   #a8231c;   /* rojo oscuro (clientes convertidos, derivada de lead) */
+    --hero-green:      #1f8c4d;   /* verde turf institucional (revenue, resultado) */
+    --hero-green-light: #3eb072;  /* verde claro (ROAS, derivada de revenue) */
+    --hero-cyan:       #5cb5c4;   /* cyan (metricas de eficiencia tipo conversion %) */
 
     /* Fondo claro (peticion explicita: NO usar Hero Navy como fondo) */
     --bg: #f7f9fb;
@@ -267,6 +274,118 @@ h1, h2, h3 { font-weight: 600; letter-spacing: -0.01em; }
     flex-shrink: 0;
 }
 
+/* === Range dropdown === */
+/* Mismo look-and-feel que .country-dropdown para coherencia visual.
+   Sustituye al antiguo .range-selector (botones) por un selector
+   compacto con popover. */
+.range-dropdown {
+    position: relative;
+    display: inline-block;
+}
+.range-trigger {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 6px 12px;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text);
+    cursor: pointer;
+    font-family: inherit;
+    min-width: 180px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    transition: border-color 0.15s, box-shadow 0.15s;
+}
+.range-trigger:hover { border-color: var(--accent); }
+.range-trigger:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(37,99,235,0.1); }
+.range-dropdown.open .range-trigger {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(37,99,235,0.1);
+}
+.range-trigger-icon {
+    font-size: 14px;
+    flex-shrink: 0;
+    line-height: 1;
+}
+.range-trigger-label {
+    flex: 1;
+    text-align: left;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.range-trigger-arrow {
+    color: var(--text-muted);
+    font-size: 10px;
+    transition: transform 0.2s;
+}
+.range-dropdown.open .range-trigger-arrow { transform: rotate(180deg); }
+
+.range-options {
+    position: absolute;
+    top: calc(100% + 4px);
+    right: 0;
+    min-width: 100%;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    box-shadow: var(--shadow-lg);
+    list-style: none;
+    margin: 0;
+    padding: 4px 0;
+    z-index: 50;
+    display: none;
+}
+.range-dropdown.open .range-options { display: block; }
+.range-options li {
+    padding: 8px 14px;
+    cursor: pointer;
+    font-size: 13px;
+    color: var(--text);
+    transition: background 0.1s;
+    white-space: nowrap;
+}
+.range-options li:hover { background: var(--bg); }
+.range-options li.selected {
+    background: #eff6ff;
+    color: var(--accent);
+    font-weight: 600;
+}
+.range-options-sep {
+    height: 1px;
+    margin: 4px 0;
+    background: var(--border);
+    padding: 0;
+    cursor: default;
+    pointer-events: none;
+}
+.range-options-sep:hover { background: var(--border); }
+.range-option-custom {
+    color: var(--text-muted);
+    font-style: italic;
+}
+
+/* Topbar Navy: invertimos colores como hace .country-trigger */
+.topbar .range-trigger {
+    background: rgba(255, 255, 255, 0.10);
+    border-color: rgba(255, 255, 255, 0.18);
+    color: #fff;
+}
+.topbar .range-trigger:hover { border-color: #fff; }
+.topbar .range-trigger-arrow { color: rgba(255, 255, 255, 0.70); }
+/* Cuando el rango NO es el default (30 dias) marcamos has-value para
+   destacar visualmente que esta filtrando algo distinto al estandar */
+.topbar .range-dropdown.has-value .range-trigger {
+    background: linear-gradient(135deg, #fff, #eff6ff);
+    color: var(--hero-navy);
+    border-color: var(--accent);
+}
+.topbar .range-dropdown.has-value .range-trigger-arrow {
+    color: var(--hero-navy);
+}
+
 /* Imagen de bandera generica */
 .flag-img {
     display: inline-block;
@@ -362,7 +481,8 @@ h1, h2, h3 { font-weight: 600; letter-spacing: -0.01em; }
     z-index: 100;
     min-width: 240px;
 }
-.custom-range.open .custom-range-popover { display: block; }
+.custom-range.open .custom-range-popover,
+.custom-range-popover.open { display: block; }
 .custom-range-row {
     display: flex;
     align-items: center;
@@ -461,13 +581,24 @@ h1, h2, h3 { font-weight: 600; letter-spacing: -0.01em; }
 .alerts-bar {
     background: linear-gradient(135deg, #fef3c7, #fef9c3);
     border-bottom: 1px solid var(--border);
-    padding: 14px 32px;
+    padding: 0 32px;
 }
+/* Boton-toggle: ocupa toda la cabecera para que sea facil clicar */
+.alerts-toggle {
+    appearance: none;
+    background: transparent;
+    border: 0;
+    width: 100%;
+    text-align: left;
+    cursor: pointer;
+    padding: 12px 0;
+    color: inherit;
+}
+.alerts-toggle:hover .alerts-chevron { color: #92400e; }
 .alerts-header {
     display: flex;
     justify-content: space-between;
-    align-items: baseline;
-    margin-bottom: 10px;
+    align-items: center;
     gap: 12px;
 }
 .alerts-title {
@@ -476,6 +607,7 @@ h1, h2, h3 { font-weight: 600; letter-spacing: -0.01em; }
     display: flex;
     align-items: center;
     gap: 8px;
+    margin: 0;
 }
 .alerts-icon { font-size: 18px; }
 .alerts-count {
@@ -486,16 +618,62 @@ h1, h2, h3 { font-weight: 600; letter-spacing: -0.01em; }
     font-size: 12px;
     font-weight: 600;
 }
+/* Dot rojo cuando hay alertas criticas y el banner esta colapsado, para
+   que la urgencia sea visible aunque este plegado */
+.alerts-severity-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--danger);
+    box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.25);
+    animation: pulse-dot 1.6s ease-in-out infinite;
+}
+@keyframes pulse-dot {
+    0%, 100% { opacity: 1; }
+    50%      { opacity: 0.4; }
+}
 .alerts-period {
     color: var(--text-muted);
     font-size: 12px;
+    margin-left: auto;
 }
+.alerts-chevron {
+    color: #b45309;
+    font-size: 14px;
+    transition: transform 0.18s ease;
+    display: inline-block;
+}
+.alerts-bar.collapsed .alerts-chevron { transform: rotate(-90deg); }
+.alerts-bar.collapsed .alerts-list { display: none; }
 .alerts-list {
     display: flex;
     gap: 10px;
     overflow-x: auto;
-    padding-bottom: 4px;
+    padding: 0 0 14px 0;
 }
+/* X para descartar una alerta concreta (solo durante la sesion) */
+.alert-chip {
+    position: relative;
+}
+.alert-chip-dismiss {
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    width: 18px;
+    height: 18px;
+    border: 0;
+    background: transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: 14px;
+    line-height: 1;
+    padding: 0;
+    border-radius: 50%;
+    opacity: 0;
+    transition: opacity 0.15s ease, background 0.15s ease;
+}
+.alert-chip:hover .alert-chip-dismiss { opacity: 1; }
+.alert-chip-dismiss:hover { background: #fee2e2; color: var(--danger); }
 .alert-chip {
     flex: 0 0 auto;
     min-width: 280px;
@@ -1119,14 +1297,22 @@ h1, h2, h3 { font-weight: 600; letter-spacing: -0.01em; }
 
 .shopping-grid {
     display: grid;
-    /* 3 columnas fijas en desktop -> 6 charts del Resumen quedan 3+3.
-       En tablet baja a 1 columna. */
+    /* 3 columnas fijas en desktop para tabs Shopping/Search/Meta (3 charts).
+       En tablet baja a 1 columna. El Resumen sobreescribe a 4 cols (8 charts). */
     grid-template-columns: repeat(3, 1fr);
     gap: 1px;
     background: var(--border);
 }
+.resumen-top-card .shopping-grid {
+    /* Resumen tiene 8 charts -> 4 cols para layout limpio 4+4. */
+    grid-template-columns: repeat(4, 1fr);
+}
+@media (max-width: 1400px) {
+    .resumen-top-card .shopping-grid { grid-template-columns: repeat(2, 1fr); }
+}
 @media (max-width: 1200px) {
     .shopping-grid { grid-template-columns: 1fr; }
+    .resumen-top-card .shopping-grid { grid-template-columns: 1fr; }
 }
 .chart-shopping {
     background: var(--surface);
@@ -1448,6 +1634,325 @@ tr.drill-subhead > td {
     border: 1px solid var(--border);
     border-radius: var(--radius-sm);
     padding: 2px;
+}
+
+/* Header sobre los charts (Shopping/Search/Meta). El selector de
+   granularidad SOLO afecta a los charts y a la tabla detalle de abajo;
+   no a la tabla resumen del top. Por eso esta entre la tabla y los charts. */
+.shopping-charts-header {
+    padding: 12px 20px 8px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    border-top: 1px solid var(--border);
+    background: var(--bg);
+}
+.shopping-charts-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+/* === Pestaña Comerciales === */
+.comercial-toolbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 12px 20px;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+.comercial-toolbar-left {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.comercial-toolbar-label {
+    font-size: 13px;
+    color: var(--text-muted);
+    font-weight: 500;
+}
+.comercial-attribution-info {
+    font-size: 12px;
+    color: var(--text-muted);
+    background: var(--bg);
+    padding: 4px 10px;
+    border-radius: 12px;
+}
+.comercial-attribution-info code {
+    background: #fef3c7;
+    color: #92400e;
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-size: 11px;
+}
+/* Tabla de inputs editables */
+.table-comercial-inputs {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+}
+.table-comercial-inputs th,
+.table-comercial-inputs td {
+    padding: 6px 10px;
+    border-bottom: 1px solid var(--border);
+    text-align: left;
+}
+.table-comercial-inputs th.th-num,
+.table-comercial-inputs td.td-num {
+    text-align: right;
+}
+.table-comercial-inputs tr.input-default {
+    background: #fef3c7;
+}
+.table-comercial-inputs tr.input-default td:first-child {
+    font-weight: 700;
+    color: #92400e;
+}
+.table-comercial-inputs input[type="number"],
+.table-comercial-inputs input[type="text"] {
+    width: 100%;
+    border: 1px solid transparent;
+    background: transparent;
+    padding: 4px 6px;
+    border-radius: 4px;
+    font-family: inherit;
+    font-size: 13px;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+}
+.table-comercial-inputs input[type="text"] { text-align: left; }
+.table-comercial-inputs input:hover,
+.table-comercial-inputs input:focus {
+    border-color: var(--accent);
+    background: var(--surface);
+    outline: none;
+}
+.table-comercial-inputs input.dirty {
+    background: #fef3c7;
+    border-color: var(--warning);
+}
+/* Flash verde momentaneo al guardar correctamente */
+.table-comercial-inputs input.saved {
+    background: #dcfce7;
+    border-color: var(--success);
+    transition: background 0.5s ease, border-color 0.5s ease;
+}
+
+/* Detalle mes a mes Comerciales — mismo look que tabla detalle Shopping */
+#table-comercial-detail {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+}
+#table-comercial-detail thead th {
+    background: var(--bg);
+    color: var(--text-muted);
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--border);
+    text-align: center;
+    position: sticky;
+    top: 0;
+    z-index: 2;
+}
+#table-comercial-detail thead th.metric { text-align: left; }
+#table-comercial-detail thead th.num { text-align: right; }
+#table-comercial-detail tbody td {
+    padding: 6px 10px;
+    border-bottom: 1px solid var(--border);
+    text-align: center;
+}
+#table-comercial-detail tbody td.metric {
+    text-align: left;
+    background: var(--bg);
+    position: sticky;
+    left: 0;
+    z-index: 1;
+}
+#table-comercial-detail tbody td.num { text-align: right; }
+#table-comercial-detail tbody tr:hover td { background: rgba(0,94,148,0.04); }
+#table-comercial-detail tbody tr:hover td.metric { background: #e6eef5; }
+#table-comercial-detail .muted { color: var(--text-muted); }
+.table-comercial-inputs .btn-delete-row {
+    background: transparent;
+    border: 0;
+    color: var(--text-muted);
+    cursor: pointer;
+    padding: 2px 8px;
+    border-radius: 4px;
+}
+.table-comercial-inputs .btn-delete-row:hover {
+    background: #fee2e2;
+    color: var(--danger);
+}
+
+/* === Modal de errores con instrucciones (Fixable Error Modal === */
+/* Se usa cuando el backend devuelve un error_code conocido (ej. OAuth
+   token caducado) para guiar al usuario a la solucion en lugar de
+   mostrar un toast crudo. */
+.fem-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(50, 63, 73, 0.55);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 9999;
+    animation: fem-fadein 0.18s ease-out;
+}
+@keyframes fem-fadein { from { opacity: 0; } to { opacity: 1; } }
+.fem-card {
+    background: var(--surface);
+    border-radius: var(--radius);
+    width: 90%;
+    max-width: 560px;
+    max-height: 85vh;
+    overflow-y: auto;
+    box-shadow: 0 20px 60px rgba(50,63,73,0.35);
+    animation: fem-slideup 0.22s ease-out;
+}
+@keyframes fem-slideup {
+    from { transform: translateY(12px); opacity: 0; }
+    to   { transform: translateY(0); opacity: 1; }
+}
+.fem-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--border);
+    background: linear-gradient(135deg, #fef3c7, #fef9c3);
+    border-radius: var(--radius) var(--radius) 0 0;
+}
+.fem-icon { font-size: 22px; }
+.fem-header h3 {
+    flex: 1;
+    margin: 0;
+    font-size: 16px;
+    color: #92400e;
+}
+.fem-close {
+    background: transparent;
+    border: 0;
+    font-size: 20px;
+    cursor: pointer;
+    color: var(--text-muted);
+    padding: 4px 10px;
+    border-radius: var(--radius-sm);
+}
+.fem-close:hover { background: rgba(0,0,0,0.06); color: var(--text); }
+.fem-body {
+    padding: 18px 20px;
+}
+.fem-error-msg {
+    background: var(--bg);
+    border-left: 3px solid var(--danger);
+    padding: 8px 12px;
+    margin: 0 0 16px 0;
+    font-size: 13px;
+    color: var(--text);
+    font-family: 'SF Mono', Consolas, Monaco, monospace;
+}
+.fem-steps {
+    list-style: none;
+    padding: 0;
+    margin: 0 0 16px 0;
+}
+.fem-steps li {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 8px 0;
+    font-size: 14px;
+    line-height: 1.4;
+    border-bottom: 1px dashed var(--border);
+}
+.fem-steps li:last-child { border-bottom: 0; }
+.fem-step-num {
+    display: inline-flex;
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    background: var(--hero-blue);
+    color: #fff;
+    font-size: 12px;
+    font-weight: 700;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+.fem-command {
+    display: flex;
+    align-items: center;
+    background: var(--hero-navy);
+    color: #fff;
+    border-radius: var(--radius-sm);
+    padding: 10px 12px;
+    margin: 12px 0;
+    font-family: 'SF Mono', Consolas, Monaco, monospace;
+    font-size: 13px;
+}
+.fem-command code {
+    flex: 1;
+    background: transparent;
+    color: #fff;
+    padding: 0;
+}
+.fem-copy-btn {
+    background: rgba(255,255,255,0.15);
+    border: 0;
+    color: #fff;
+    padding: 4px 10px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 14px;
+}
+.fem-copy-btn:hover { background: rgba(255,255,255,0.25); }
+.fem-link {
+    display: inline-block;
+    margin: 8px 0;
+    padding: 8px 12px;
+    background: var(--bg);
+    color: var(--hero-blue);
+    text-decoration: none;
+    border-radius: var(--radius-sm);
+    font-size: 13px;
+    font-weight: 500;
+    border: 1px solid var(--border);
+    transition: all 0.15s;
+}
+.fem-link:hover {
+    background: var(--hero-blue);
+    color: #fff;
+    border-color: var(--hero-blue);
+}
+.fem-tip {
+    margin-top: 14px;
+    padding: 10px 12px;
+    background: #eff6ff;
+    border-left: 3px solid var(--hero-blue);
+    border-radius: 4px;
+    font-size: 13px;
+    line-height: 1.4;
+}
+.fem-footer {
+    padding: 12px 20px;
+    border-top: 1px solid var(--border);
+    background: var(--bg);
+    text-align: right;
+    border-radius: 0 0 var(--radius) var(--radius);
 }
 
 .gran-btn {

@@ -1,5 +1,23 @@
 // Dashboard Meta Ads Heroturfs
 
+// === Paleta corporativa Heroturfs para charts ===
+// Mantener sincronizada con las variables --hero-* del CSS.
+// Familias de color:
+//   Azules (blue/navy/blueLight)  = costes / inversiones
+//   Rojos (red/redDark)           = captacion (leads, clientes)
+//   Verdes (green/greenLight)     = resultado positivo (revenue, ROAS)
+//   Cyan                          = metricas de eficiencia (conversion %)
+const HEROTURFS_PALETTE = {
+    navy:       '#323f49',  // Hero Navy - CPL, metricas neutras
+    blue:       '#005e94',  // Hero Blue - Inversion principal
+    blueLight:  '#4f9bcb',  // CAC (variacion clara del azul)
+    red:        '#e3332b',  // Hero Red - Leads
+    redDark:    '#a8231c',  // Clientes nuevos (variacion oscura del rojo)
+    green:      '#1f8c4d',  // Hero Green - Revenue (verde turf)
+    greenLight: '#3eb072',  // ROAS (variacion clara del verde)
+    cyan:       '#5cb5c4',  // Conversion % (eficiencia)
+};
+
 const state = {
     days: 30,
     granularity: 'daily',     // del grafico de evolucion
@@ -265,6 +283,13 @@ function renderNavisionKpis(k) {
     state.lastNavRevenue = k.revenue || 0;
     state.lastNavRevenuePrev = (k.previous && k.previous.revenue) || 0;
     _maybeRenderRoasReal();
+    // Ultima hora de sync en la meta-bar (igual que Meta/Google/HubSpot)
+    const navEl = $('#last-sync-nav');
+    if (navEl) {
+        navEl.textContent = k.last_sync
+            ? `Navision: ${formatDateTimeES(k.last_sync)}`
+            : 'Navision: nunca';
+    }
 }
 
 // ROAS real = revenue Navision / spend blended. Calculado en el frontend
@@ -443,8 +468,8 @@ function renderTimeseries(payload) {
                 {
                     label: 'Gasto (EUR)',
                     data: spend,
-                    borderColor: '#2563eb',
-                    backgroundColor: 'rgba(37, 99, 235, 0.08)',
+                    borderColor: HEROTURFS_PALETTE.blue,
+                    backgroundColor: 'rgba(0, 94, 148, 0.08)',
                     fill: true,
                     tension: 0.3,
                     yAxisID: 'y',
@@ -455,8 +480,8 @@ function renderTimeseries(payload) {
                 {
                     label: 'Leads',
                     data: leads,
-                    borderColor: '#7c3aed',
-                    backgroundColor: 'rgba(124, 58, 237, 0.08)',
+                    borderColor: HEROTURFS_PALETTE.red,
+                    backgroundColor: 'rgba(227, 51, 43, 0.08)',
                     fill: false,
                     tension: 0.3,
                     yAxisID: 'y1',
@@ -486,12 +511,12 @@ function renderTimeseries(payload) {
                 x: { grid: { display: false }, ticks: { maxRotation: 0, autoSkip: true, maxTicksLimit: 12 } },
                 y: {
                     type: 'linear', position: 'left',
-                    title: { display: true, text: 'Gasto (EUR)', color: '#2563eb' },
-                    grid: { color: 'rgba(15,23,42,0.05)' },
+                    title: { display: true, text: 'Gasto (EUR)', color: HEROTURFS_PALETTE.blue },
+                    grid: { color: 'rgba(50,63,73,0.06)' },
                 },
                 y1: {
                     type: 'linear', position: 'right',
-                    title: { display: true, text: 'Leads', color: '#7c3aed' },
+                    title: { display: true, text: 'Leads', color: HEROTURFS_PALETTE.red },
                     grid: { drawOnChartArea: false },
                     beginAtZero: true,
                 },
@@ -517,7 +542,7 @@ function renderTopCampaigns(campaigns) {
             datasets: [{
                 label: 'Gasto (EUR)',
                 data: spend,
-                backgroundColor: '#2563eb',
+                backgroundColor: HEROTURFS_PALETTE.blue,
                 borderRadius: 4,
             }],
         },
@@ -747,13 +772,21 @@ function renderAlerts(payload) {
     renderAlertsFiltered();
 }
 
+// Set en memoria de alertas descartadas en esta sesion (no persiste para
+// que mañana vuelvan a aparecer si el problema sigue). Se identifica una
+// alerta por channel|campaign_name|type para que retries del mismo problema
+// sigan ocultos mientras dure la sesion.
+const dismissedAlerts = new Set();
+function _alertKey(a) { return `${a.channel}|${a.campaign_name}|${a.type}`; }
+
 function renderAlertsFiltered() {
     const payload = state.alertsPayload;
     if (!payload) return;
     const bar = $('#alerts-bar');
     const list = $('#alerts-list');
     const allAlerts = payload.alerts || [];
-    const alerts = filterAlertsByTab(allAlerts, state.activeTab);
+    const tabAlerts = filterAlertsByTab(allAlerts, state.activeTab);
+    const alerts = tabAlerts.filter(a => !dismissedAlerts.has(_alertKey(a)));
     if (!alerts.length) {
         bar.style.display = 'none';
         return;
@@ -762,13 +795,21 @@ function renderAlertsFiltered() {
     $('#alerts-count').textContent = alerts.length;
     $('#alerts-period').textContent = `${payload.current_period} vs ${payload.previous_period}`;
 
+    // Punto rojo pulsante en la cabecera si hay alertas criticas y el
+    // banner esta colapsado (asi el usuario ve la urgencia sin desplegar)
+    const dot = $('#alerts-severity-dot');
+    const hasCritical = alerts.some(a => a.severity === 'critical');
+    if (dot) dot.style.display = hasCritical ? 'inline-block' : 'none';
+
     list.innerHTML = alerts.map(a => {
         const change = a.change_pct;
         const changeStr = change === null ? 'nuevo' : (change > 0 ? '+' : '') + change.toLocaleString('es-ES', { maximumFractionDigits: 0 }) + '%';
         const changeCls = change !== null && change < 0 ? 'change-negative' : (change !== null && change > 0 ? 'change-positive' : '');
         const arrow = change === null ? '·' : (change < 0 ? '↓' : '↑');
+        const key = _alertKey(a);
         return `
-            <div class="alert-chip severity-${a.severity}">
+            <div class="alert-chip severity-${a.severity}" data-alert-key="${escapeHtml(key)}">
+                <button type="button" class="alert-chip-dismiss" title="Ocultar esta alerta">×</button>
                 <div class="alert-chip-top">
                     <div class="alert-chip-tags">
                         <span class="alert-chip-tag tag-${a.channel}">${a.channel}</span>
@@ -782,6 +823,36 @@ function renderAlertsFiltered() {
             </div>
         `;
     }).join('');
+
+    // Bind dismiss buttons (delegated cada render porque innerHTML se reescribe)
+    list.querySelectorAll('.alert-chip-dismiss').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const chip = btn.closest('.alert-chip');
+            const key = chip && chip.dataset.alertKey;
+            if (key) {
+                dismissedAlerts.add(key);
+                renderAlertsFiltered();
+            }
+        });
+    });
+}
+
+// Toggle plegar/desplegar la barra de alertas. Estado persiste en
+// localStorage entre sesiones.
+function setupAlertsToggle() {
+    const bar = $('#alerts-bar');
+    const btn = $('#alerts-toggle');
+    if (!bar || !btn) return;
+    let collapsed;
+    try { collapsed = localStorage.getItem('dashboard-alerts-collapsed') === '1'; } catch (e) { collapsed = false; }
+    if (collapsed) bar.classList.add('collapsed');
+    btn.setAttribute('aria-expanded', String(!collapsed));
+    btn.addEventListener('click', () => {
+        const isCollapsed = bar.classList.toggle('collapsed');
+        btn.setAttribute('aria-expanded', String(!isCollapsed));
+        try { localStorage.setItem('dashboard-alerts-collapsed', isCollapsed ? '1' : '0'); } catch (e) {}
+    });
 }
 
 // === Google Ads render ===
@@ -924,12 +995,14 @@ async function loadResumenComparisonOnly() {
 function renderResumenComparison(payload) {
     if (!payload || !payload.series) return;
     const charts = channelCharts.resumen;
-    if (charts.cost)    charts.cost.destroy();
-    if (charts.leads)   charts.leads.destroy();
-    if (charts.cpl)     charts.cpl.destroy();
-    if (charts.revenue) charts.revenue.destroy();
-    if (charts.roas)    charts.roas.destroy();
-    if (charts.cac)     charts.cac.destroy();
+    if (charts.cost)         charts.cost.destroy();
+    if (charts.leads)        charts.leads.destroy();
+    if (charts.cpl)          charts.cpl.destroy();
+    if (charts.revenue)      charts.revenue.destroy();
+    if (charts.roas)         charts.roas.destroy();
+    if (charts.cac)          charts.cac.destroy();
+    if (charts.newcust)      charts.newcust.destroy();
+    if (charts.convrate)     charts.convrate.destroy();
 
     // Filtra periods/series si el toggle "Ocultar parciales" esta activo.
     let periods = payload.periods || [];
@@ -939,6 +1012,8 @@ function renderResumenComparison(payload) {
     let revenueSeries = payload.series.revenue || [];
     let roasSeries = payload.series.roas || [];
     let cacSeries = payload.series.cac || [];
+    let newCustSeries = payload.series.new_customers || [];
+    let convRateSeries = payload.series.conversion_rate || [];
     if (state.resumenHidePartial) {
         const idxKeep = periods.map((p, i) => p.is_partial ? -1 : i).filter(i => i >= 0);
         periods = idxKeep.map(i => periods[i]);
@@ -948,6 +1023,8 @@ function renderResumenComparison(payload) {
         revenueSeries = idxKeep.map(i => revenueSeries[i]);
         roasSeries = idxKeep.map(i => roasSeries[i]);
         cacSeries = idxKeep.map(i => cacSeries[i]);
+        newCustSeries = idxKeep.map(i => newCustSeries[i]);
+        convRateSeries = idxKeep.map(i => convRateSeries[i]);
     }
 
     const fmtEurFn = (v) => fmtEur.format(v || 0) + ' €';
@@ -956,16 +1033,22 @@ function renderResumenComparison(payload) {
     const fmtEurIntFn = (v) => fmtEurBig.format(Math.round(v || 0)) + ' €';
     // ROAS: 'Xx' con 2 decimales (ej. 11.97x)
     const fmtRoasFn = (v) => (v || 0).toLocaleString('es-ES', {minimumFractionDigits: 2, maximumFractionDigits: 2}) + 'x';
+    // % conversion lead -> cliente, 1 decimal
+    const fmtPctFn = (v) => (v || 0).toLocaleString('es-ES', {minimumFractionDigits: 1, maximumFractionDigits: 1}) + '%';
 
-    // Hero/standard palette: Blue (cost), Red (leads), Navy (CPL), Green
-    // (revenue real), Verde oscuro (ROAS real - lo que mas importa)
-    charts.cost    = buildAggregateChart('chart-resumen-cost',    periods, costSeries,    'EUR',        fmtEurIntFn, 'bar',  '#005e94', 10);
-    charts.leads   = buildAggregateChart('chart-resumen-leads',   periods, leadsSeries,   'Leads',      fmtIntFn,    'bar',  '#e3332b');
-    charts.cpl     = buildAggregateChart('chart-resumen-cpl',     periods, cplSeries,     'EUR / lead', fmtEurFn,    'line', '#323f49');
-    charts.revenue = buildAggregateChart('chart-resumen-revenue', periods, revenueSeries, 'EUR',        fmtEurIntFn, 'bar',  '#16a34a', 10);
-    charts.roas    = buildAggregateChart('chart-resumen-roas',    periods, roasSeries,    'x',          fmtRoasFn,   'line', '#15803d');
-    // CAC: linea naranja warning. Lower is better.
-    charts.cac     = buildAggregateChart('chart-resumen-cac',     periods, cacSeries,     'EUR / cliente nuevo', fmtEurFn, 'line', '#f59e0b');
+    // Paleta Heroturfs por familias:
+    //   Azules (Hero Blue + variaciones) = costes/inversiones
+    //   Rojos (Hero Red + oscuro) = captacion (leads, clientes convertidos)
+    //   Verdes (Hero Green + claro) = resultado positivo
+    //   Cyan = metricas de eficiencia
+    charts.cost     = buildAggregateChart('chart-resumen-cost',     periods, costSeries,     'EUR',                 fmtEurIntFn, 'bar',  HEROTURFS_PALETTE.blue,       10);
+    charts.leads    = buildAggregateChart('chart-resumen-leads',    periods, leadsSeries,    'Leads',               fmtIntFn,    'bar',  HEROTURFS_PALETTE.red);
+    charts.cpl      = buildAggregateChart('chart-resumen-cpl',      periods, cplSeries,      'EUR / lead',          fmtEurFn,    'line', HEROTURFS_PALETTE.navy);
+    charts.revenue  = buildAggregateChart('chart-resumen-revenue',  periods, revenueSeries,  'EUR',                 fmtEurIntFn, 'bar',  HEROTURFS_PALETTE.green,      10);
+    charts.roas     = buildAggregateChart('chart-resumen-roas',     periods, roasSeries,     'x',                   fmtRoasFn,   'line', HEROTURFS_PALETTE.greenLight);
+    charts.cac      = buildAggregateChart('chart-resumen-cac',      periods, cacSeries,      'EUR / cliente nuevo', fmtEurFn,    'line', HEROTURFS_PALETTE.blueLight);
+    charts.newcust  = buildAggregateChart('chart-resumen-newcust',  periods, newCustSeries,  'Clientes nuevos',     fmtIntFn,    'bar',  HEROTURFS_PALETTE.redDark);
+    charts.convrate = buildAggregateChart('chart-resumen-convrate', periods, convRateSeries, '%',                   fmtPctFn,    'line', HEROTURFS_PALETTE.cyan);
 
     const info = document.getElementById('resumen-info');
     if (info) {
@@ -1001,7 +1084,7 @@ function buildAggregateChart(canvasId, periods, data, yLabel, formatter, chartTy
             borderColor: pointColors,
             borderWidth: 0,
             borderRadius: 4,
-            maxBarThickness: 36,
+            maxBarThickness: 42,    // antes 36 - barras un pelin mas anchas
         }
         : {
             label: 'Total',
@@ -1009,12 +1092,13 @@ function buildAggregateChart(canvasId, periods, data, yLabel, formatter, chartTy
             borderColor: color,
             backgroundColor: color + '22',
             fill: false,
-            tension: 0.3,
-            borderWidth: 2,
-            pointRadius: periods.map(p => p.is_partial ? 4 : 3),
-            pointHoverRadius: 6,
+            tension: 0.35,
+            borderWidth: 2.5,        // antes 2 - linea mas gruesa = mas clara
+            pointRadius: periods.map(p => p.is_partial ? 5 : 4),
+            pointHoverRadius: 7,
             pointBackgroundColor: pointColors,
-            pointBorderColor: pointColors,
+            pointBorderColor: '#ffffff',
+            pointBorderWidth: 2,     // halo blanco alrededor del punto
             pointStyle: periods.map(p => p.is_partial ? 'crossRot' : 'circle'),
         };
     return new Chart(ctx, {
@@ -1024,10 +1108,15 @@ function buildAggregateChart(canvasId, periods, data, yLabel, formatter, chartTy
         options: {
             responsive: true,
             maintainAspectRatio: false,
-            layout: { padding: { top: 18 } },
+            layout: { padding: { top: 24 } },   // mas margen para que los labels no se corten
             plugins: {
                 legend: { display: false },
                 tooltip: {
+                    backgroundColor: 'rgba(50,63,73,0.95)',  // hero navy translucido
+                    titleFont: { weight: '600' },
+                    bodyFont: { size: 13 },
+                    padding: 10,
+                    cornerRadius: 6,
                     callbacks: {
                         label: (ctx) => {
                             const p = periods[ctx.dataIndex] || {};
@@ -1042,9 +1131,17 @@ function buildAggregateChart(canvasId, periods, data, yLabel, formatter, chartTy
                 datalabels: {
                     anchor: 'end',
                     align: 'top',
-                    offset: 2,
+                    offset: 4,
                     clamp: true,
-                    font: { size: (labelFontSize || 11), weight: '600' },
+                    // Fondo blanco semitransparente + borde sutil del color
+                    // de la serie para que los numeros destaquen sobre el grid
+                    backgroundColor: 'rgba(255,255,255,0.85)',
+                    borderColor: (ctx) => periods[ctx.dataIndex] && periods[ctx.dataIndex].is_partial
+                        ? colorPartial : colorFull,
+                    borderRadius: 4,
+                    borderWidth: 0,
+                    padding: { top: 2, bottom: 2, left: 5, right: 5 },
+                    font: { size: (labelFontSize || 12), weight: '700' }, // antes 11/600
                     color: (ctx) => periods[ctx.dataIndex] && periods[ctx.dataIndex].is_partial
                         ? colorPartial : colorFull,
                     display: (ctx) => {
@@ -1058,11 +1155,14 @@ function buildAggregateChart(canvasId, periods, data, yLabel, formatter, chartTy
                 },
             },
             scales: {
-                x: { grid: { display: false }, ticks: { font: { size: 10 } } },
+                x: {
+                    grid: { display: false },
+                    ticks: { font: { size: 11, weight: '500' }, color: '#64748b' },
+                },
                 y: {
-                    title: { display: true, text: yLabel },
-                    grid: { color: 'rgba(15,23,42,0.05)' },
-                    ticks: { callback: (v) => formatter(v), font: { size: 10 } },
+                    title: { display: true, text: yLabel, font: { size: 11, weight: '600' }, color: '#64748b' },
+                    grid: { color: 'rgba(50,63,73,0.06)', drawBorder: false },
+                    ticks: { callback: (v) => formatter(v), font: { size: 10 }, color: '#94a3b8' },
                     beginAtZero: chartType === 'bar',
                 },
             },
@@ -1073,7 +1173,7 @@ function buildAggregateChart(canvasId, periods, data, yLabel, formatter, chartTy
 // === Comparativa de canal (Shopping / Search) por pais ===
 // Estructura paralela: un set de DOM IDs prefijado por kind + un slot de charts por kind.
 const channelCharts = {
-    resumen:  { cost: null, leads: null, cpl: null, revenue: null, roas: null, cac: null },
+    resumen:  { cost: null, leads: null, cpl: null, revenue: null, roas: null, cac: null, newcust: null, convrate: null },
     meta:     { cost: null, cpc: null, ctr: null },
     shopping: { cost: null, cpc: null, ctr: null },
     search:   { cost: null, cpc: null, ctr: null },
@@ -1971,6 +2071,9 @@ async function doSyncSource(btnId, endpoint, labelOriginal, labelDuring) {
         if (data.status === 'ok') {
             toast(`Sincronizacion ${labelOriginal} completada`, 'success');
             await loadAll();
+        } else if (data.error_code === 'OAUTH_REFRESH_TOKEN_EXPIRED') {
+            // Error tipado: muestra modal con instrucciones claras
+            showFixableErrorModal(labelOriginal, data);
         } else {
             toast('Error: ' + (data.error || 'desconocido'), 'error');
         }
@@ -1980,6 +2083,72 @@ async function doSyncSource(btnId, endpoint, labelOriginal, labelDuring) {
         btn.classList.remove('syncing');
         btn.disabled = false;
         labelEl.textContent = labelOriginal;
+    }
+}
+
+// Modal generico para errores con instrucciones de fix.
+// Se invoca desde doSyncSource cuando el backend devuelve un error_code
+// que el frontend sabe explicar (ej. OAUTH_REFRESH_TOKEN_EXPIRED).
+function showFixableErrorModal(source, errorData) {
+    // Limpia modal previo si existia
+    const existing = document.getElementById('fixable-error-modal');
+    if (existing) existing.remove();
+
+    const fix = errorData.fix || {};
+    const steps = (fix.steps || []).map((s, i) =>
+        `<li><span class="fem-step-num">${i + 1}</span> ${escapeHtml(s)}</li>`
+    ).join('');
+    const cmdBlock = fix.command
+        ? `<div class="fem-command">
+             <code id="fem-cmd-text">${escapeHtml(fix.command)}</code>
+             <button class="fem-copy-btn" type="button" title="Copiar comando">📋</button>
+           </div>` : '';
+    const consoleLink = fix.console_url
+        ? `<a href="${fix.console_url}" target="_blank" rel="noopener" class="fem-link">🔗 Abrir Google Cloud Console (OAuth)</a>` : '';
+    const tip = fix.tip
+        ? `<div class="fem-tip">💡 <b>Tip:</b> ${escapeHtml(fix.tip)}</div>` : '';
+
+    const modal = document.createElement('div');
+    modal.id = 'fixable-error-modal';
+    modal.className = 'fem-overlay';
+    modal.innerHTML = `
+        <div class="fem-card">
+            <div class="fem-header">
+                <span class="fem-icon">⚠️</span>
+                <h3>${escapeHtml(source)} · ${escapeHtml(fix.title || 'Error')}</h3>
+                <button class="fem-close" type="button" title="Cerrar">✕</button>
+            </div>
+            <div class="fem-body">
+                <p class="fem-error-msg">${escapeHtml(errorData.error || '')}</p>
+                <ol class="fem-steps">${steps}</ol>
+                ${cmdBlock}
+                ${consoleLink}
+                ${tip}
+            </div>
+            <div class="fem-footer">
+                <button class="btn btn-secondary fem-close-btn" type="button">Cerrar</button>
+            </div>
+        </div>
+    `;
+    document.body.appendChild(modal);
+
+    // Bindings
+    const close = () => modal.remove();
+    modal.querySelector('.fem-close').addEventListener('click', close);
+    modal.querySelector('.fem-close-btn').addEventListener('click', close);
+    modal.addEventListener('click', (e) => { if (e.target === modal) close(); });
+    document.addEventListener('keydown', function escHandler(e) {
+        if (e.key === 'Escape') { close(); document.removeEventListener('keydown', escHandler); }
+    });
+    const copyBtn = modal.querySelector('.fem-copy-btn');
+    if (copyBtn) {
+        copyBtn.addEventListener('click', async () => {
+            try {
+                await navigator.clipboard.writeText(fix.command);
+                copyBtn.textContent = '✓';
+                setTimeout(() => copyBtn.textContent = '📋', 1500);
+            } catch (err) { toast('No se pudo copiar', 'error'); }
+        });
     }
 }
 
@@ -2118,9 +2287,11 @@ function setupTabs() {
             [chartTimeseries, chartTopCampaigns,
              channelCharts.resumen.cost,  channelCharts.resumen.leads, channelCharts.resumen.cpl,
              channelCharts.resumen.revenue, channelCharts.resumen.roas, channelCharts.resumen.cac,
+             channelCharts.resumen.newcust, channelCharts.resumen.convrate,
              channelCharts.shopping.cost, channelCharts.shopping.cpc,  channelCharts.shopping.ctr,
              channelCharts.search.cost,   channelCharts.search.cpc,    channelCharts.search.ctr,
-             channelCharts.meta.cost,     channelCharts.meta.cpc,      channelCharts.meta.ctr]
+             channelCharts.meta.cost,     channelCharts.meta.cpc,      channelCharts.meta.ctr,
+             (typeof comercialState !== 'undefined' ? comercialState.chart : null)]
                 .forEach(c => { if (c) try { c.resize(); } catch (e) {} });
         }, 50);
         // Scroll arriba al cambiar
@@ -2136,16 +2307,53 @@ function setupTabs() {
     } catch (e) {}
 }
 
-function setupCustomRangePicker() {
-    const wrapper = $('#custom-range');
-    const btn = $('#btn-custom-range');
+// Etiquetas mostradas en el trigger del dropdown segun el preset.
+// Mantener en sync con las <li data-days="..."> del HTML.
+const RANGE_LABELS = {
+    'today':       'Hoy',
+    'yesterday':   'Ayer',
+    'last_week':   'Semana pasada',
+    'last_month':  'Mes pasado',
+    '7':           'Últimos 7 días',
+    '30':          'Últimos 30 días',
+    '90':          'Últimos 90 días',
+    '365':         'Últimos 12 meses',
+    'all':         'Todo',
+};
+
+function _applyPresetRange(daysVal) {
+    state.days = daysVal;
+    state.customSince = null;
+    state.customUntil = null;
+    // Selected en la lista
+    $$('#range-options li').forEach(li => {
+        li.classList.toggle('selected', li.dataset.days === daysVal);
+    });
+    // Etiqueta del trigger
+    const lbl = $('#range-trigger-label');
+    if (lbl) lbl.textContent = RANGE_LABELS[daysVal] || daysVal;
+    // has-value cuando NO es el default 30
+    const dd = $('#range-dropdown');
+    if (dd) dd.classList.toggle('has-value', daysVal !== '30');
+    // Granularidad mensual para rangos largos
+    if (daysVal === 'all' || (parseInt(daysVal, 10) >= 180)) {
+        state.granularity = 'monthly';
+        $$('.gran-btn').forEach(b => b.classList.toggle('active', b.dataset.gran === 'monthly'));
+    }
+}
+
+function setupRangeDropdown() {
+    const dropdown = $('#range-dropdown');
+    const trigger = $('#range-trigger');
+    const options = $('#range-options');
+    const popover = $('#custom-range-popover');
     const sinceInput = $('#custom-since');
     const untilInput = $('#custom-until');
     const apply = $('#custom-apply');
     const cancel = $('#custom-cancel');
-    const label = $('#custom-range-label');
+    if (!dropdown || !trigger) return;
 
-    // Valores por defecto: ultimos 30 dias
+    // Valores por defecto del custom picker: ultimos 30 dias
     const today = new Date();
     const monthAgo = new Date(today);
     monthAgo.setDate(today.getDate() - 29);
@@ -2153,15 +2361,40 @@ function setupCustomRangePicker() {
     untilInput.value = today.toISOString().substring(0, 10);
     untilInput.max = today.toISOString().substring(0, 10);
 
-    btn.addEventListener('click', (e) => {
+    // Toggle del dropdown
+    trigger.addEventListener('click', (e) => {
         e.stopPropagation();
-        wrapper.classList.toggle('open');
+        dropdown.classList.toggle('open');
     });
+    // Click fuera = cerrar (solo el dropdown, el popover lo gestionamos aparte)
     document.addEventListener('click', (e) => {
-        if (!wrapper.contains(e.target)) wrapper.classList.remove('open');
+        if (!dropdown.contains(e.target)) {
+            dropdown.classList.remove('open');
+            popover.classList.remove('open');
+        }
     });
-    cancel.addEventListener('click', () => wrapper.classList.remove('open'));
 
+    // Click en una opcion
+    options.querySelectorAll('li[data-days]').forEach(li => {
+        li.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const v = li.dataset.days;
+            if (v === '__custom__') {
+                // Abrir popover de fechas
+                dropdown.classList.remove('open');
+                popover.classList.add('open');
+                return;
+            }
+            _applyPresetRange(v);
+            dropdown.classList.remove('open');
+            loadAll();
+        });
+    });
+
+    // Custom popover: cancelar
+    cancel.addEventListener('click', () => popover.classList.remove('open'));
+
+    // Custom popover: aplicar
     apply.addEventListener('click', () => {
         const since = sinceInput.value;
         const until = untilInput.value;
@@ -2177,14 +2410,14 @@ function setupCustomRangePicker() {
         state.customSince = since;
         state.customUntil = until;
 
-        // Marcar este boton como activo, desmarcar los presets
-        $$('.range-btn').forEach(b => b.classList.remove('active'));
-        btn.classList.add('active');
-
-        // Etiqueta corta
-        const sDate = since.split('-').reverse().slice(0, 2).join('/'); // dd/mm
+        // Marcar selected y etiqueta
+        $$('#range-options li').forEach(li => {
+            li.classList.toggle('selected', li.dataset.days === '__custom__');
+        });
+        const sDate = since.split('-').reverse().slice(0, 2).join('/');
         const uDate = until.split('-').reverse().slice(0, 2).join('/');
-        label.textContent = `${sDate} - ${uDate}`;
+        $('#range-trigger-label').textContent = `${sDate} - ${uDate}`;
+        dropdown.classList.add('has-value');
 
         // Si el rango es largo, forzar granularidad mensual
         const days = (new Date(until) - new Date(since)) / 86400000 + 1;
@@ -2193,7 +2426,7 @@ function setupCustomRangePicker() {
             $$('.gran-btn').forEach(b => b.classList.toggle('active', b.dataset.gran === 'monthly'));
         }
 
-        wrapper.classList.remove('open');
+        popover.classList.remove('open');
         loadAll();
     });
 }
@@ -2219,28 +2452,8 @@ function setupChatbot() {
 
 // === Init ===
 function init() {
-    // Selector de rango (preset)
-    $$('.range-btn[data-days]').forEach(btn => {
-        btn.addEventListener('click', () => {
-            $$('.range-btn').forEach(b => b.classList.remove('active'));
-            btn.classList.add('active');
-            // "all" se pasa tal cual; los numericos se mantienen como string
-            state.days = btn.dataset.days;
-            state.customSince = null;
-            state.customUntil = null;
-            // Reset etiqueta del boton personalizado
-            $('#custom-range-label').textContent = 'Personalizado';
-            // Si pasamos a "Todo" o "12 meses", forzar granularidad mensual por defecto
-            if (state.days === 'all' || parseInt(state.days, 10) >= 180) {
-                state.granularity = 'monthly';
-                $$('.gran-btn').forEach(b => b.classList.toggle('active', b.dataset.gran === 'monthly'));
-            }
-            loadAll();
-        });
-    });
-
-    // Selector de rango personalizado
-    setupCustomRangePicker();
+    // Selector de rango (dropdown unificado: presets + Hoy/Ayer + personalizado)
+    setupRangeDropdown();
 
     // Selector de granularidad (solo afecta al grafico de evolucion)
     $$('.gran-btn').forEach(btn => {
@@ -2342,9 +2555,309 @@ function init() {
     setupScrollControls();
     setupStickyHeightTracking();
     setupTabs();
+    setupAlertsToggle();
     setupChatbot();
+    setupComerciales();
     loadCountrySelector();
     loadAll();
+}
+
+// ============================================================================
+// === Pestaña Comerciales ===
+// ============================================================================
+// Estado local de la pestana
+const comercialState = {
+    code: null,                    // 'IVAN'
+    year: new Date().getFullYear(),
+    chart: null,
+    inputsDirty: new Map(),        // key=year_month -> {field: value} con cambios sin guardar
+};
+
+let __comercialesLoaded = false;
+
+function setupComerciales() {
+    const select = document.getElementById('comercial-select');
+    const yearSel = document.getElementById('comercial-year');
+    const addBtn = document.getElementById('com-add-month');
+    if (!select) return;
+    yearSel.value = String(comercialState.year);
+    select.addEventListener('change', () => {
+        comercialState.code = select.value;
+        loadComercialAnalysis();
+    });
+    yearSel.addEventListener('change', () => {
+        comercialState.year = parseInt(yearSel.value, 10);
+        loadComercialAnalysis();
+    });
+    if (addBtn) addBtn.addEventListener('click', addInputMonthRow);
+    // Lazy load: solo al primer click en el tab
+    document.querySelector('.tab-btn[data-tab="comerciales"]').addEventListener('click', () => {
+        if (!__comercialesLoaded) {
+            __comercialesLoaded = true;
+            loadComercialesList();
+        }
+    });
+    // Edge case: si la tab persistida en localStorage es 'comerciales',
+    // setupTabs() la activa antes de que se dispare el click → cargamos
+    // inmediatamente para no dejar la pestana en blanco al recargar.
+    if (state.activeTab === 'comerciales' && !__comercialesLoaded) {
+        __comercialesLoaded = true;
+        loadComercialesList();
+    }
+}
+
+async function loadComercialesList() {
+    try {
+        const data = await fetchJson('/api/comerciales');
+        const select = document.getElementById('comercial-select');
+        select.innerHTML = (data.comerciales || [])
+            .map(c => `<option value="${c.code}">${escapeHtml(c.name)}</option>`)
+            .join('');
+        if (data.comerciales && data.comerciales.length) {
+            comercialState.code = data.comerciales[0].code;
+            select.value = comercialState.code;
+            await loadComercialAnalysis();
+        }
+    } catch (e) {
+        toast('Error cargando comerciales: ' + e.message, 'error');
+    }
+}
+
+async function loadComercialAnalysis() {
+    if (!comercialState.code) return;
+    try {
+        const [analysis, detail] = await Promise.all([
+            fetchJson(`/api/comerciales/${comercialState.code}/analysis?year=${comercialState.year}`),
+            fetchJson(`/api/comerciales/${comercialState.code}`),
+        ]);
+        renderComercialKpis(analysis);
+        renderComercialChart(analysis);
+        renderComercialInputs(detail);
+        renderComercialDetailTable(analysis);
+        // Info de atribucion
+        const info = document.getElementById('comercial-attribution-info');
+        if (info) {
+            const rule = analysis.comercial.attribution_rule || '';
+            const objetivo = analysis.comercial.objetivo_anual;
+            info.innerHTML = `Atribuci&oacute;n: <code>${escapeHtml(rule)}</code> &middot; Margen bruto: <b>${Math.round((analysis.comercial.margen_bruto_pct||0)*100)}%</b> &middot; Objetivo anual: <b>${fmtEurBig.format(Math.round(objetivo||0))}€</b>`;
+        }
+    } catch (e) {
+        toast('Error cargando análisis: ' + e.message, 'error');
+    }
+}
+
+function renderComercialKpis(data) {
+    const t = data.totals;
+    document.getElementById('com-kpi-ventas').textContent = fmtEurBig.format(Math.round(t.ventas));
+    const prog = t.progreso_objetivo;
+    const progEl = document.getElementById('com-kpi-progress');
+    if (prog !== null && prog !== undefined) {
+        const pct = Math.round(prog * 1000) / 10;
+        const cls = pct >= 100 ? 'change-positive' : (pct >= 50 ? '' : 'change-negative');
+        progEl.className = 'kpi-delta ' + cls;
+        progEl.innerHTML = `${pct}% del objetivo (${fmtEurBig.format(Math.round(t.objetivo_anual))}€)`;
+    } else {
+        progEl.innerHTML = '';
+    }
+    document.getElementById('com-kpi-mbruto').textContent = fmtEurBig.format(Math.round(t.margen_bruto));
+    document.getElementById('com-kpi-coste').textContent = fmtEurBig.format(Math.round(t.coste_total));
+    document.getElementById('com-kpi-coste-detail').textContent =
+        `pers ${Math.round(t.coste_personal)}€ + ads ${Math.round(t.coste_ads)}€ + hrm ${Math.round(t.coste_herramientas)}€`;
+    document.getElementById('com-kpi-mneto').textContent = fmtEurBig.format(Math.round(t.margen_neto));
+    const mn = t.margen_neto;
+    const mnEl = document.getElementById('com-kpi-mneto-delta');
+    mnEl.className = 'kpi-delta ' + (mn > 0 ? 'change-positive' : 'change-negative');
+    mnEl.textContent = mn > 0 ? 'Rentable' : 'En pérdidas';
+    document.getElementById('com-kpi-veces').textContent =
+        t.veces_salario_anual !== null ? `${t.veces_salario_anual.toLocaleString('es-ES', {minimumFractionDigits: 2, maximumFractionDigits: 2})}x` : '-';
+    document.getElementById('com-kpi-clientes').textContent = fmtInt.format(t.n_clientes);
+    document.getElementById('com-kpi-facturas').textContent = fmtInt.format(t.n_facturas);
+}
+
+function renderComercialChart(data) {
+    const ctx = document.getElementById('chart-comercial-evolution').getContext('2d');
+    if (comercialState.chart) comercialState.chart.destroy();
+
+    const labels = data.months.map(m => {
+        const [y, mo] = m.year_month.split('-');
+        const names = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
+        return names[parseInt(mo,10)-1];
+    });
+    const ventas = data.months.map(m => m.ventas);
+    const margenNeto = data.months.map(m => m.margen_neto);
+    const tecnico = data.months.map(m => m.umbral_tecnico);
+    const aceptable = data.months.map(m => m.minimo_aceptable);
+    const sano = data.months.map(m => m.objetivo_sano);
+
+    comercialState.chart = new Chart(ctx, {
+        data: {
+            labels: labels,
+            datasets: [
+                // Familia paleta Heroturfs: ventas en azul corporate,
+                // margen neto en verde turf, umbrales en navy/red para
+                // jerarquia visual (sano > aceptable > tecnico)
+                {type:'bar',  label:'Ventas HT',           data: ventas,     backgroundColor: HEROTURFS_PALETTE.blue,       borderColor: HEROTURFS_PALETTE.blue, order: 3},
+                {type:'line', label:'Margen neto',         data: margenNeto, borderColor: HEROTURFS_PALETTE.green,          backgroundColor: 'transparent', tension: 0.3, fill: false, pointRadius: 4, borderWidth: 3, order: 1},
+                {type:'line', label:'Umbral técnico',      data: tecnico,    borderColor: HEROTURFS_PALETTE.navy,           borderDash: [4,4], backgroundColor: 'transparent', pointRadius: 0, borderWidth: 1.5, fill: false, order: 2},
+                {type:'line', label:'Mínimo aceptable (2×)', data: aceptable, borderColor: HEROTURFS_PALETTE.red,            borderDash: [4,4], backgroundColor: 'transparent', pointRadius: 0, borderWidth: 1.5, fill: false, order: 2},
+                {type:'line', label:'Objetivo sano (3×)',  data: sano,       borderColor: HEROTURFS_PALETTE.greenLight,     borderDash: [4,4], backgroundColor: 'transparent', pointRadius: 0, borderWidth: 1.5, fill: false, order: 2},
+            ]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: { mode: 'index', intersect: false },
+            scales: {
+                y: { beginAtZero: true, ticks: { callback: v => fmtEurBig.format(v) + '€' } }
+            },
+            plugins: {
+                legend: { position: 'bottom' },
+                tooltip: {
+                    callbacks: {
+                        label: (ctx) => `${ctx.dataset.label}: ${fmtEurBig.format(Math.round(ctx.parsed.y))}€`
+                    }
+                },
+                datalabels: { display: false }
+            }
+        }
+    });
+}
+
+function renderComercialInputs(detail) {
+    const tbody = document.querySelector('#table-comercial-inputs tbody');
+    comercialState.inputsDirty.clear();
+    const inputs = detail.inputs || [];
+    tbody.innerHTML = inputs.map(inp => _renderInputRow(inp, inp.year_month === '*')).join('');
+    _bindInputRowEvents();
+}
+
+function _renderInputRow(inp, isDefault) {
+    const ymLabel = isDefault ? '* Default' : inp.year_month;
+    const ymCell = isDefault
+        ? `<td>${ymLabel}</td>`
+        : `<td><input type="text" data-field="year_month" value="${inp.year_month}" pattern="\\d{4}-\\d{2}" style="width:80px;"></td>`;
+    return `
+        <tr class="${isDefault ? 'input-default' : ''}" data-ym="${escapeHtml(inp.year_month)}">
+            ${ymCell}
+            <td class="td-num"><input type="number" step="1" data-field="sueldo_bruto" value="${inp.sueldo_bruto ?? ''}" placeholder="—"></td>
+            <td class="td-num"><input type="number" step="0.01" min="0" max="1" data-field="pct_sueldo" value="${inp.pct_sueldo ?? ''}" placeholder="0.00"></td>
+            <td class="td-num"><input type="number" step="0.01" min="0" max="1" data-field="pct_ads" value="${inp.pct_ads ?? ''}" placeholder="0.00"></td>
+            <td class="td-num"><input type="number" step="1" data-field="eur_herramientas" value="${inp.eur_herramientas ?? ''}" placeholder="—"></td>
+            <td><input type="text" data-field="notes" value="${escapeHtml(inp.notes || '')}" placeholder="—"></td>
+            <td>${isDefault ? '' : '<button type="button" class="btn-delete-row" title="Borrar mes">✕</button>'}</td>
+        </tr>
+    `;
+}
+
+function _bindInputRowEvents() {
+    const tbody = document.querySelector('#table-comercial-inputs tbody');
+    tbody.querySelectorAll('input').forEach(inp => {
+        const orig = inp.value;
+        inp.addEventListener('input', () => {
+            if (inp.value !== orig) inp.classList.add('dirty');
+            else inp.classList.remove('dirty');
+        });
+        // Auto-save on blur
+        inp.addEventListener('blur', async () => {
+            if (!inp.classList.contains('dirty')) return;
+            const tr = inp.closest('tr');
+            const ym = tr.dataset.ym;
+            const field = inp.dataset.field;
+            const val = inp.value === '' ? null : (field === 'notes' || field === 'year_month' ? inp.value : parseFloat(inp.value));
+            try {
+                await fetchJson(`/api/comerciales/${comercialState.code}/inputs`, {
+                    method: 'PUT',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({inputs: [{year_month: ym, [field]: val}]})
+                });
+                inp.classList.remove('dirty');
+                inp.classList.add('saved');
+                setTimeout(() => inp.classList.remove('saved'), 500);
+                // Re-render analysis con los nuevos numeros
+                loadComercialAnalysis();
+            } catch (e) {
+                toast('Error guardando: ' + e.message, 'error');
+            }
+        });
+    });
+    tbody.querySelectorAll('.btn-delete-row').forEach(btn => {
+        btn.addEventListener('click', async () => {
+            const tr = btn.closest('tr');
+            const ym = tr.dataset.ym;
+            if (!confirm(`¿Borrar el mes ${ym}? Volverá a usar el default.`)) return;
+            try {
+                await fetchJson(`/api/comerciales/${comercialState.code}/inputs`, {
+                    method: 'PUT',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({inputs: [{year_month: ym, action: 'delete'}]})
+                });
+                loadComercialAnalysis();
+            } catch (e) {
+                toast('Error borrando: ' + e.message, 'error');
+            }
+        });
+    });
+}
+
+function addInputMonthRow() {
+    // Sugiere proximo mes sin override
+    const usedYms = new Set(Array.from(document.querySelectorAll('#table-comercial-inputs tr[data-ym]'))
+        .map(tr => tr.dataset.ym).filter(ym => ym !== '*'));
+    let suggested = `${comercialState.year}-01`;
+    for (let m = 1; m <= 12; m++) {
+        const ym = `${comercialState.year}-${String(m).padStart(2,'0')}`;
+        if (!usedYms.has(ym)) { suggested = ym; break; }
+    }
+    const ym = prompt('¿Para qué mes? (formato YYYY-MM)', suggested);
+    if (!ym || !/^\d{4}-\d{2}$/.test(ym)) {
+        if (ym) toast('Formato inválido. Usa YYYY-MM, ej. 2026-07', 'error');
+        return;
+    }
+    // Crear con el default copiado para que sea visible
+    fetchJson(`/api/comerciales/${comercialState.code}/inputs`, {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({inputs: [{year_month: ym, sueldo_bruto: 1675, pct_sueldo: 0.47, pct_ads: 1.0, eur_herramientas: 125}]})
+    }).then(() => loadComercialAnalysis()).catch(e => toast('Error: ' + e.message, 'error'));
+}
+
+function renderComercialDetailTable(data) {
+    const thead = document.querySelector('#table-comercial-detail thead');
+    const tbody = document.querySelector('#table-comercial-detail tbody');
+    const months = data.months;
+    const monthNames = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
+    const labels = months.map(m => monthNames[parseInt(m.year_month.split('-')[1], 10) - 1]);
+    thead.innerHTML = `<tr><th class="metric">Métrica</th>${labels.map(l => `<th class="num">${l}</th>`).join('')}<th class="num"><b>Total</b></th></tr>`;
+    const rows = [
+        ['Ventas HT', months.map(m => m.ventas), 'eur'],
+        ['Nº facturas', months.map(m => m.n_facturas), 'int'],
+        ['Nº clientes', months.map(m => m.n_clientes), 'int'],
+        ['Ads Meta+Google (total país)', months.map(m => m.ads_total), 'eur'],
+        ['Coste personal imputado', months.map(m => m.coste_personal), 'eur'],
+        ['Coste ads imputado', months.map(m => m.coste_ads), 'eur'],
+        ['Coste herramientas', months.map(m => m.coste_herramientas), 'eur'],
+        ['Coste TOTAL imputado', months.map(m => m.coste_total), 'eur'],
+        ['Margen bruto (60%)', months.map(m => m.margen_bruto), 'eur'],
+        ['Margen neto', months.map(m => m.margen_neto), 'eur'],
+        ['Margen %', months.map(m => m.margen_pct === null ? null : m.margen_pct * 100), 'pct'],
+        ['Veces salario', months.map(m => m.veces_salario), 'x'],
+    ];
+    const fmt = (v, type) => {
+        if (v === null || v === undefined) return '<span class="muted">—</span>';
+        if (type === 'eur') return `${fmtEurBig.format(Math.round(v))}€`;
+        if (type === 'int') return fmtInt.format(v);
+        if (type === 'pct') return `${v.toLocaleString('es-ES',{minimumFractionDigits:1,maximumFractionDigits:1})}%`;
+        if (type === 'x') return `${v.toLocaleString('es-ES',{minimumFractionDigits:2,maximumFractionDigits:2})}x`;
+        return v;
+    };
+    tbody.innerHTML = rows.map(([label, vals, type]) => {
+        const total = type === 'int' ? vals.reduce((a,b)=>a+b,0) : (type === 'pct' || type === 'x' ? null : vals.reduce((a,b)=>a+(b||0),0));
+        return `<tr>
+            <td class="metric"><b>${label}</b></td>
+            ${vals.map(v => `<td class="num">${fmt(v, type)}</td>`).join('')}
+            <td class="num"><b>${total === null ? '' : fmt(total, type)}</b></td>
+        </tr>`;
+    }).join('');
 }
 
 document.addEventListener('DOMContentLoaded', init);

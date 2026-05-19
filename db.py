@@ -368,6 +368,43 @@ CREATE TABLE IF NOT EXISTS navision_salespeople (
     updated_at  TEXT
 );
 
+-- === Comerciales: análisis ramp-up + ROI por persona ===
+-- Tabla maestra de los SDRs/comerciales que queremos monitorear.
+-- attribution_rule es un string parseable que indica cómo se atribuyen
+-- ventas de Navision al comercial. Formatos soportados:
+--   'country:Francia'           -> facturas con sell_country=Francia
+--   'salesperson_code:I03'      -> facturas con salesperson_code=I03
+--   'sdr_code:XYZ'              -> facturas con sdr_code=XYZ (cuando se sincronice)
+-- Esto permite migrar la atribución sin tocar código cuando sepamos
+-- el campo real de SDR en BC14.
+CREATE TABLE IF NOT EXISTS comerciales (
+    code               TEXT PRIMARY KEY,    -- 'IVAN'
+    name               TEXT NOT NULL,       -- 'Iván'
+    attribution_rule   TEXT NOT NULL,       -- 'country:Francia'
+    margen_bruto_pct   REAL NOT NULL DEFAULT 0.60,
+    objetivo_anual     REAL NOT NULL DEFAULT 0,
+    active             INTEGER NOT NULL DEFAULT 1,
+    created_at         TEXT,
+    updated_at         TEXT
+);
+
+-- Inputs configurables mes a mes. Un comercial puede tener una fila
+-- "default" (year_month='*') que aplica a cualquier mes sin override,
+-- y filas mensuales (year_month='YYYY-MM') que override para ese mes.
+-- pct_* son fracciones 0.0-1.0 (0.47 = 47%).
+CREATE TABLE IF NOT EXISTS comercial_inputs (
+    comercial_code     TEXT NOT NULL,
+    year_month         TEXT NOT NULL,       -- '*' o 'YYYY-MM'
+    sueldo_bruto       REAL,                -- €/mes total del comercial
+    pct_sueldo         REAL,                -- 0.0-1.0 imputado a HT
+    pct_ads            REAL,                -- 0.0-1.0 inversión publi imputada
+    eur_herramientas   REAL,                -- € equipamiento (Outlook+Tel+CRM)
+    notes              TEXT,
+    updated_at         TEXT,
+    PRIMARY KEY (comercial_code, year_month),
+    FOREIGN KEY (comercial_code) REFERENCES comerciales(code) ON DELETE CASCADE
+);
+
 -- Log de syncs (mismo patron que sync_log/google_sync_log).
 CREATE TABLE IF NOT EXISTS navision_sync_log (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -401,6 +438,8 @@ def init_db():
     with get_conn() as conn:
         conn.executescript(SCHEMA)
         _migrate(conn)
+        # Seed inicial de comerciales (idempotente, solo crea si no existe)
+        seed_comerciales(conn)
 
 
 def _migrate(conn):
@@ -1081,6 +1120,107 @@ def log_navision_sync_finish(conn, sync_id, items_count, invoices_count,
         """,
         (items_count, invoices_count, lines_count, status, error, sync_id),
     )
+
+
+# === Comerciales (CRUD + seed) ===
+
+def upsert_comercial(conn, code, name, attribution_rule,
+                      margen_bruto_pct=0.60, objetivo_anual=0, active=1):
+    """Crea o actualiza un comercial. Idempotente."""
+    conn.execute(
+        """
+        INSERT INTO comerciales (code, name, attribution_rule, margen_bruto_pct,
+                                  objetivo_anual, active, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+        ON CONFLICT(code) DO UPDATE SET
+            name = excluded.name,
+            attribution_rule = excluded.attribution_rule,
+            margen_bruto_pct = excluded.margen_bruto_pct,
+            objetivo_anual = excluded.objetivo_anual,
+            active = excluded.active,
+            updated_at = datetime('now')
+        """,
+        (code, name, attribution_rule, margen_bruto_pct, objetivo_anual, active),
+    )
+
+
+def upsert_comercial_input(conn, comercial_code, year_month,
+                            sueldo_bruto=None, pct_sueldo=None,
+                            pct_ads=None, eur_herramientas=None, notes=None):
+    """Crea o actualiza una fila de inputs para un comercial-mes.
+    year_month='*' = default que aplica a meses sin override específico."""
+    conn.execute(
+        """
+        INSERT INTO comercial_inputs (comercial_code, year_month, sueldo_bruto,
+                                       pct_sueldo, pct_ads, eur_herramientas,
+                                       notes, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
+        ON CONFLICT(comercial_code, year_month) DO UPDATE SET
+            sueldo_bruto = COALESCE(excluded.sueldo_bruto, comercial_inputs.sueldo_bruto),
+            pct_sueldo = COALESCE(excluded.pct_sueldo, comercial_inputs.pct_sueldo),
+            pct_ads = COALESCE(excluded.pct_ads, comercial_inputs.pct_ads),
+            eur_herramientas = COALESCE(excluded.eur_herramientas, comercial_inputs.eur_herramientas),
+            notes = COALESCE(excluded.notes, comercial_inputs.notes),
+            updated_at = datetime('now')
+        """,
+        (comercial_code, year_month, sueldo_bruto, pct_sueldo, pct_ads,
+         eur_herramientas, notes),
+    )
+
+
+def delete_comercial_input(conn, comercial_code, year_month):
+    """Borra una fila de input mensual (no la default '*')."""
+    if year_month == '*':
+        return  # default no se borra, se editan sus valores
+    conn.execute(
+        "DELETE FROM comercial_inputs WHERE comercial_code = ? AND year_month = ?",
+        (comercial_code, year_month),
+    )
+
+
+def seed_comerciales(conn):
+    """Pobla el comercial IVAN por defecto si no existe.
+    Datos basados en la hoja SDR del Excel 'Seguimiento leads Heroturfs.xlsx':
+      - Sueldo bruto ≈ 1.675€/mes (cubre Outlook+Tel+CRM aparte)
+      - May-Sep 2026: 47% imputado a HT (~785,71€/mes coste personal HT)
+      - Oct-Dic 2026: 70% imputado a HT (~1175,21€/mes)
+      - Equipamiento: 125€/mes (May-Oct), 64€/mes (Nov-Dic)
+      - Margen bruto HT: 60%
+      - Objetivo anual: 110.000€ (escenario base del Excel)
+    Atribución provisional: country=Francia (hasta identificar SDR_Code real).
+    """
+    # Comercial principal
+    exists = conn.execute("SELECT 1 FROM comerciales WHERE code = 'IVAN'").fetchone()
+    if exists:
+        return
+    upsert_comercial(
+        conn,
+        code='IVAN',
+        name='Iván',
+        attribution_rule='country:Francia',
+        margen_bruto_pct=0.60,
+        objetivo_anual=110000,
+        active=1,
+    )
+    # Default que aplica a todos los meses no overrideados
+    upsert_comercial_input(
+        conn, 'IVAN', '*',
+        sueldo_bruto=1675,
+        pct_sueldo=0.47,
+        pct_ads=1.00,
+        eur_herramientas=125,
+        notes='Default Iván (Excel SDR May-Sep)',
+    )
+    # Overrides Oct-Dic 2026 (mayor imputación tras pasar a tiempo completo)
+    for ym in ('2026-10', '2026-11', '2026-12'):
+        upsert_comercial_input(
+            conn, 'IVAN', ym,
+            sueldo_bruto=1675,
+            pct_sueldo=0.70,
+            pct_ads=1.00,
+            eur_herramientas=64 if ym != '2026-10' else 125,
+            notes='Iván tiempo completo HT' if ym != '2026-10' else None,
+        )
 
 
 def stage_probability_map(conn):

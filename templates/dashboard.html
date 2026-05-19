@@ -26,30 +26,38 @@
                 </button>
                 <ul class="country-options" id="country-options"></ul>
             </div>
-            <div class="range-selector" role="tablist">
-                <button class="range-btn" data-days="7">7 d&iacute;as</button>
-                <button class="range-btn active" data-days="30">30 d&iacute;as</button>
-                <button class="range-btn" data-days="90">90 d&iacute;as</button>
-                <button class="range-btn" data-days="365">12 meses</button>
-                <button class="range-btn" data-days="all">Todo</button>
-                <div class="custom-range" id="custom-range">
-                    <button class="range-btn" id="btn-custom-range" type="button" title="Rango personalizado">
-                        <span class="range-btn-icon">&#128197;</span>
-                        <span id="custom-range-label">Personalizado</span>
-                    </button>
-                    <div class="custom-range-popover" id="custom-range-popover">
-                        <div class="custom-range-row">
-                            <label>Desde</label>
-                            <input type="date" id="custom-since">
-                        </div>
-                        <div class="custom-range-row">
-                            <label>Hasta</label>
-                            <input type="date" id="custom-until">
-                        </div>
-                        <div class="custom-range-actions">
-                            <button type="button" id="custom-cancel" class="btn btn-secondary">Cancelar</button>
-                            <button type="button" id="custom-apply" class="btn btn-primary">Aplicar</button>
-                        </div>
+            <div class="range-dropdown" id="range-dropdown">
+                <button type="button" class="range-trigger" id="range-trigger">
+                    <span class="range-trigger-icon">&#128197;</span>
+                    <span class="range-trigger-label" id="range-trigger-label">&Uacute;ltimos 30 d&iacute;as</span>
+                    <span class="range-trigger-arrow">&#x25BE;</span>
+                </button>
+                <ul class="range-options" id="range-options">
+                    <li data-days="today">Hoy</li>
+                    <li data-days="yesterday">Ayer</li>
+                    <li data-days="last_week">Semana pasada</li>
+                    <li data-days="last_month">Mes pasado</li>
+                    <li class="range-options-sep" aria-hidden="true"></li>
+                    <li data-days="7">&Uacute;ltimos 7 d&iacute;as</li>
+                    <li data-days="30" class="selected">&Uacute;ltimos 30 d&iacute;as</li>
+                    <li data-days="90">&Uacute;ltimos 90 d&iacute;as</li>
+                    <li data-days="365">&Uacute;ltimos 12 meses</li>
+                    <li data-days="all">Todo</li>
+                    <li class="range-options-sep" aria-hidden="true"></li>
+                    <li data-days="__custom__" class="range-option-custom">&#128197; Personalizado&hellip;</li>
+                </ul>
+                <div class="custom-range-popover" id="custom-range-popover">
+                    <div class="custom-range-row">
+                        <label>Desde</label>
+                        <input type="date" id="custom-since">
+                    </div>
+                    <div class="custom-range-row">
+                        <label>Hasta</label>
+                        <input type="date" id="custom-until">
+                    </div>
+                    <div class="custom-range-actions">
+                        <button type="button" id="custom-cancel" class="btn btn-secondary">Cancelar</button>
+                        <button type="button" id="custom-apply" class="btn btn-primary">Aplicar</button>
                     </div>
                 </div>
             </div>
@@ -80,6 +88,8 @@
         <span id="last-sync-google" class="last-sync">Google: -</span>
         <span class="separator">&middot;</span>
         <span id="last-sync-hs" class="last-sync">HubSpot: -</span>
+        <span class="separator">&middot;</span>
+        <span id="last-sync-nav" class="last-sync">Navision: -</span>
     </div>
     <nav class="tabs" role="tablist">
         <button class="tab-btn active" data-tab="resumen" type="button">&#128202; Resumen</button>
@@ -87,18 +97,24 @@
         <button class="tab-btn" data-tab="shopping" type="button">&#128717; Shopping por pa&iacute;s</button>
         <button class="tab-btn" data-tab="search" type="button">&#128269; Search por pa&iacute;s</button>
         <button class="tab-btn" data-tab="hubspot" type="button">&#128142; HubSpot CRM</button>
+        <button class="tab-btn" data-tab="comerciales" type="button">&#128100; Comerciales</button>
     </nav>
     </div>
 
-    <!-- Alertas (solo se renderiza si hay) -->
+    <!-- Alertas (solo se renderiza si hay). El usuario puede plegar/desplegar
+         con el chevron; el estado se guarda en localStorage. -->
     <div id="alerts-bar" class="alerts-bar" style="display:none;">
-        <div class="alerts-header">
-            <h2 class="alerts-title">
-                <span class="alerts-icon">&#128276;</span>
-                Alertas <span id="alerts-count" class="alerts-count"></span>
-            </h2>
-            <span id="alerts-period" class="alerts-period"></span>
-        </div>
+        <button type="button" id="alerts-toggle" class="alerts-toggle" aria-expanded="true" title="Plegar / desplegar alertas">
+            <div class="alerts-header">
+                <h2 class="alerts-title">
+                    <span class="alerts-icon">&#128276;</span>
+                    Alertas <span id="alerts-count" class="alerts-count"></span>
+                    <span id="alerts-severity-dot" class="alerts-severity-dot" style="display:none;"></span>
+                </h2>
+                <span id="alerts-period" class="alerts-period"></span>
+                <span class="alerts-chevron">&#9662;</span>
+            </div>
+        </button>
         <div id="alerts-list" class="alerts-list"></div>
     </div>
 
@@ -121,6 +137,7 @@
                 </div>
             </div>
             <div class="shopping-grid">
+                <!-- Fila 1: input -> top funnel -->
                 <div class="chart-card chart-shopping">
                     <div class="chart-header">
                         <h2>&#128176; Inversi&oacute;n</h2>
@@ -144,6 +161,14 @@
                 </div>
                 <div class="chart-card chart-shopping">
                     <div class="chart-header">
+                        <h2>&#127919; Conversi&oacute;n Lead&rarr;Cliente</h2>
+                        <span class="chart-subtitle">Clientes nuevos / Leads (%)</span>
+                    </div>
+                    <div class="chart-body"><canvas id="chart-resumen-convrate"></canvas></div>
+                </div>
+                <!-- Fila 2: bottom funnel -> output -->
+                <div class="chart-card chart-shopping">
+                    <div class="chart-header">
                         <h2>&#128201; Revenue Heroturfs</h2>
                         <span class="chart-subtitle">Facturado en Navision (EUR, sin IVA)</span>
                     </div>
@@ -151,10 +176,10 @@
                 </div>
                 <div class="chart-card chart-shopping">
                     <div class="chart-header">
-                        <h2>&#128640; ROAS Real</h2>
-                        <span class="chart-subtitle">Revenue Nav / Inversi&oacute;n Blended</span>
+                        <h2>&#128101; Clientes nuevos</h2>
+                        <span class="chart-subtitle">Primera factura Heroturfs en el periodo</span>
                     </div>
-                    <div class="chart-body"><canvas id="chart-resumen-roas"></canvas></div>
+                    <div class="chart-body"><canvas id="chart-resumen-newcust"></canvas></div>
                 </div>
                 <div class="chart-card chart-shopping">
                     <div class="chart-header">
@@ -162,6 +187,13 @@
                         <span class="chart-subtitle">Inversi&oacute;n / Clientes nuevos Heroturfs (EUR)</span>
                     </div>
                     <div class="chart-body"><canvas id="chart-resumen-cac"></canvas></div>
+                </div>
+                <div class="chart-card chart-shopping">
+                    <div class="chart-header">
+                        <h2>&#128640; ROAS Real</h2>
+                        <span class="chart-subtitle">Revenue Nav / Inversi&oacute;n Blended</span>
+                    </div>
+                    <div class="chart-body"><canvas id="chart-resumen-roas"></canvas></div>
                 </div>
             </div>
         </section>
@@ -380,11 +412,6 @@
                             <option value="all">Mostrar todas</option>
                         </select>
                     </label>
-                    <div class="granularity-selector">
-                        <button class="mgran-btn" data-mgran="daily">D&iacute;a</button>
-                        <button class="mgran-btn active" data-mgran="weekly">Semana</button>
-                        <button class="mgran-btn" data-mgran="monthly">Mes</button>
-                    </div>
                 </div>
             </div>
             <div id="meta-country-chips" class="shopping-country-chips"></div>
@@ -413,6 +440,14 @@
                 </div>
             </div>
 
+            <div class="shopping-charts-header">
+                <span class="shopping-charts-title">&#128200; Evoluci&oacute;n por periodo</span>
+                <div class="granularity-selector">
+                    <button class="mgran-btn" data-mgran="daily">D&iacute;a</button>
+                    <button class="mgran-btn active" data-mgran="weekly">Semana</button>
+                    <button class="mgran-btn" data-mgran="monthly">Mes</button>
+                </div>
+            </div>
             <div class="shopping-grid">
                 <div class="chart-card chart-shopping">
                     <div class="chart-header">
@@ -470,11 +505,6 @@
         <section class="shopping-card">
             <div class="shopping-header">
                 <span id="shopping-info" class="weekly-info">-</span>
-                <div class="granularity-selector">
-                    <button class="sgran-btn" data-sgran="daily">D&iacute;a</button>
-                    <button class="sgran-btn active" data-sgran="weekly">Semana</button>
-                    <button class="sgran-btn" data-sgran="monthly">Mes</button>
-                </div>
             </div>
             <div id="shopping-country-chips" class="shopping-country-chips"></div>
 
@@ -501,6 +531,14 @@
                 </div>
             </div>
 
+            <div class="shopping-charts-header">
+                <span class="shopping-charts-title">&#128200; Evoluci&oacute;n por periodo</span>
+                <div class="granularity-selector">
+                    <button class="sgran-btn" data-sgran="daily">D&iacute;a</button>
+                    <button class="sgran-btn active" data-sgran="weekly">Semana</button>
+                    <button class="sgran-btn" data-sgran="monthly">Mes</button>
+                </div>
+            </div>
             <div class="shopping-grid">
                 <div class="chart-card chart-shopping">
                     <div class="chart-header">
@@ -557,11 +595,6 @@
         <section class="shopping-card">
             <div class="shopping-header">
                 <span id="search-info" class="weekly-info">-</span>
-                <div class="granularity-selector">
-                    <button class="srgran-btn" data-srgran="daily">D&iacute;a</button>
-                    <button class="srgran-btn active" data-srgran="weekly">Semana</button>
-                    <button class="srgran-btn" data-srgran="monthly">Mes</button>
-                </div>
             </div>
             <div id="search-country-chips" class="shopping-country-chips"></div>
 
@@ -588,6 +621,14 @@
                 </div>
             </div>
 
+            <div class="shopping-charts-header">
+                <span class="shopping-charts-title">&#128200; Evoluci&oacute;n por periodo</span>
+                <div class="granularity-selector">
+                    <button class="srgran-btn" data-srgran="daily">D&iacute;a</button>
+                    <button class="srgran-btn active" data-srgran="weekly">Semana</button>
+                    <button class="srgran-btn" data-srgran="monthly">Mes</button>
+                </div>
+            </div>
             <div class="shopping-grid">
                 <div class="chart-card chart-shopping">
                     <div class="chart-header">
@@ -761,6 +802,116 @@
         </section>
         </section>
         <!-- ============== /TAB HUBSPOT ============== -->
+
+        <!-- ============== TAB: COMERCIALES ============== -->
+        <section class="tab-pane" data-tab="comerciales">
+        <section class="section-divider">
+            <h2 class="section-title">An&aacute;lisis de comerciales <span class="section-badge section-badge-google">Navision + Blended</span></h2>
+            <p class="section-desc">Ramp-up y rentabilidad por comercial: ventas atribuidas, coste imputado (sueldo + ads + herramientas), margen y umbrales (t&eacute;cnico / aceptable / sano). Se inspira en la hoja SDR del Excel.</p>
+        </section>
+
+        <!-- Selector de comercial + año -->
+        <section class="comercial-toolbar">
+            <div class="comercial-toolbar-left">
+                <label class="comercial-toolbar-label">Comercial:</label>
+                <select id="comercial-select" class="meta-select"></select>
+                <label class="comercial-toolbar-label" style="margin-left:16px;">A&ntilde;o:</label>
+                <select id="comercial-year" class="meta-select">
+                    <option value="2025">2025</option>
+                    <option value="2026" selected>2026</option>
+                    <option value="2027">2027</option>
+                </select>
+            </div>
+            <div class="comercial-toolbar-right">
+                <span id="comercial-attribution-info" class="comercial-attribution-info"></span>
+            </div>
+        </section>
+
+        <!-- KPIs anuales -->
+        <section class="kpi-grid">
+            <div class="kpi-card kpi-spend">
+                <div class="kpi-label">Ventas HT acumuladas</div>
+                <div class="kpi-value" id="com-kpi-ventas">-</div>
+                <div class="kpi-unit">EUR</div>
+                <div class="kpi-delta" id="com-kpi-progress"></div>
+            </div>
+            <div class="kpi-card">
+                <div class="kpi-label">Margen bruto (60%)</div>
+                <div class="kpi-value" id="com-kpi-mbruto">-</div>
+                <div class="kpi-unit">EUR</div>
+            </div>
+            <div class="kpi-card">
+                <div class="kpi-label">Coste total imputado</div>
+                <div class="kpi-value" id="com-kpi-coste">-</div>
+                <div class="kpi-unit">EUR &middot; <span id="com-kpi-coste-detail"></span></div>
+            </div>
+            <div class="kpi-card">
+                <div class="kpi-label">Margen neto</div>
+                <div class="kpi-value" id="com-kpi-mneto">-</div>
+                <div class="kpi-unit">EUR</div>
+                <div class="kpi-delta" id="com-kpi-mneto-delta"></div>
+            </div>
+            <div class="kpi-card">
+                <div class="kpi-label">Veces salario</div>
+                <div class="kpi-value" id="com-kpi-veces">-</div>
+                <div class="kpi-unit">M.bruto / coste personal</div>
+            </div>
+            <div class="kpi-card">
+                <div class="kpi-label">N&ordm; clientes</div>
+                <div class="kpi-value" id="com-kpi-clientes">-</div>
+                <div class="kpi-unit"><span id="com-kpi-facturas">-</span> facturas</div>
+            </div>
+        </section>
+
+        <!-- Gráfica mes a mes con umbrales -->
+        <section class="shopping-card">
+            <div class="shopping-header">
+                <span class="weekly-info">Evoluci&oacute;n mes a mes con umbrales de rentabilidad (l&iacute;neas horizontales)</span>
+            </div>
+            <div class="chart-card chart-shopping" style="border:0;">
+                <div class="chart-body" style="height: 380px;"><canvas id="chart-comercial-evolution"></canvas></div>
+            </div>
+        </section>
+
+        <!-- Panel de inputs editables -->
+        <section class="shopping-card">
+            <div class="shopping-header">
+                <span class="weekly-info">&#9881;&#65039; Inputs imputaci&oacute;n &middot; <b>Default (*)</b> aplica a meses sin override; los meses listados sobreescriben.</span>
+                <button type="button" id="com-add-month" class="btn btn-secondary" style="padding:5px 12px; font-size:12px;">+ A&ntilde;adir mes</button>
+            </div>
+            <div class="table-wrapper" style="padding: 12px 20px;">
+                <table id="table-comercial-inputs" class="table-comercial-inputs">
+                    <thead>
+                        <tr>
+                            <th>Mes</th>
+                            <th class="th-num" title="Sueldo bruto total mensual del comercial">Sueldo bruto (&euro;)</th>
+                            <th class="th-num" title="% del sueldo imputado a Heroturfs">% sueldo HT</th>
+                            <th class="th-num" title="% de la inversi&oacute;n publicitaria del pa&iacute;s imputada a este comercial">% ads HT</th>
+                            <th class="th-num" title="Outlook + Tel&eacute;fono + CRM (&euro;)">Herramientas (&euro;)</th>
+                            <th>Notas</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+        </section>
+
+        <!-- Tabla detalle mes a mes (calculada) -->
+        <section class="shopping-card">
+            <div class="shopping-header">
+                <span class="weekly-info">&#128202; Detalle mes a mes (calculado a partir de Navision + Meta/Google + inputs)</span>
+            </div>
+            <div class="weekly-table-wrapper">
+                <table id="table-comercial-detail" class="shopping-detail-table">
+                    <thead></thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+        </section>
+
+        </section>
+        <!-- ============== /TAB COMERCIALES ============== -->
     </main>
 
     <!-- Toast -->

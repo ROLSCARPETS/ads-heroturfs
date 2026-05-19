@@ -1,11 +1,15 @@
 """Dashboard web Flask para analisis de campanas Meta Ads de Heroturfs."""
 
 import os
+import secrets
 import sqlite3
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
-from flask import Flask, jsonify, render_template, request
+from dotenv import load_dotenv
+from flask import Flask, jsonify, redirect, render_template, request, session
+
+load_dotenv()
 
 import db
 import hubspot_sync
@@ -19,6 +23,37 @@ from campaign_country import SUPPORTED_COUNTRIES
 app = Flask(__name__)
 app.config["TEMPLATES_AUTO_RELOAD"] = True
 app.jinja_env.auto_reload = True
+
+# === SSO con rols-bi portal ===
+# La cookie `bi_session` la firma el portal con SECRET_KEY. Esta sub-app
+# usa el MISMO SECRET_KEY y SESSION_COOKIE_NAME para descifrarla y
+# confiar en session['auth']. Si no hay auth -> redirige al login del
+# portal (definido en BI_PORTAL_URL).
+app.config["SECRET_KEY"] = os.getenv("SECRET_KEY") or secrets.token_hex(32)
+app.config["SESSION_COOKIE_NAME"] = os.getenv("SESSION_COOKIE_NAME", "bi_session")
+_cookie_domain = os.getenv("SESSION_COOKIE_DOMAIN", "").strip()
+if _cookie_domain:
+    app.config["SESSION_COOKIE_DOMAIN"] = _cookie_domain
+BI_PORTAL_URL = os.getenv("BI_PORTAL_URL", "http://localhost:5000").rstrip("/")
+SSO_ENABLED = bool(os.getenv("SECRET_KEY"))  # solo si hay SECRET_KEY config
+
+
+@app.before_request
+def _require_login():
+    """Bloquea acceso si SSO activado y no hay sesion."""
+    if not SSO_ENABLED:
+        return
+    if request.endpoint in ("static", "health"):
+        return
+    if session.get("auth"):
+        return
+    return redirect(f"{BI_PORTAL_URL}/login?next={request.url}")
+
+
+@app.route("/health")
+def health():
+    return {"status": "ok"}
+
 
 # Asegurar que las tablas existen (idempotente, corre migraciones si las hay).
 db.init_db()
@@ -90,16 +125,37 @@ def _resolve_range(days_param):
     days_param puede ser:
     - Un entero como string ("30", "90", "365"): N dias hacia atras desde hoy
     - "all": desde el primer registro en BBDD hasta hoy
+    - "today": solo hoy (since=until=today)
+    - "yesterday": solo ayer (since=until=yesterday)
+    - "last_week": semana pasada cerrada (lunes-domingo)
+    - "last_month": mes pasado cerrado (dia 1 - ultimo dia)
     """
-    until = date.today()
+    today = date.today()
     if days_param == "all":
+        until = today
         with _get_conn() as conn:
             r = conn.execute("SELECT MIN(date) mn FROM insights_daily").fetchone()
         if r and r["mn"]:
             since = datetime.strptime(r["mn"], "%Y-%m-%d").date()
         else:
             since = until
+    elif days_param == "today":
+        since = until = today
+    elif days_param == "yesterday":
+        since = until = today - timedelta(days=1)
+    elif days_param == "last_week":
+        # Semana pasada completa: lunes-domingo previo al actual.
+        # weekday(): Lun=0, Dom=6
+        this_monday = today - timedelta(days=today.weekday())
+        until = this_monday - timedelta(days=1)         # ultimo domingo
+        since = until - timedelta(days=6)               # lunes anterior
+    elif days_param == "last_month":
+        # Mes pasado completo: dia 1 - ultimo dia del mes anterior.
+        first_this_month = today.replace(day=1)
+        until = first_this_month - timedelta(days=1)    # ultimo dia mes anterior
+        since = until.replace(day=1)                    # dia 1 mes anterior
     else:
+        until = today
         try:
             days = int(days_param)
         except (TypeError, ValueError):
@@ -2504,6 +2560,15 @@ def api_resumen_comparison():
         for i in range(n)
     ]
 
+    # Ratio conversion lead -> cliente (%) = nuevos clientes / leads * 100.
+    # Loose attribution misma logica que CAC: clientes nuevos del periodo P
+    # se atribuyen a leads del mismo P. Nota: puede salir > 100% si entran
+    # clientes via canales offline no registrados como leads HubSpot.
+    conversion_rate_total = [
+        round((new_customers_total[i] / leads_total[i] * 100), 2) if leads_total[i] > 0 else 0
+        for i in range(n)
+    ]
+
     return jsonify({
         "since": since,
         "until": until,
@@ -2517,6 +2582,7 @@ def api_resumen_comparison():
             "roas": roas_total,
             "new_customers": new_customers_total,
             "cac": cac_total,
+            "conversion_rate": conversion_rate_total,
         },
     })
 
@@ -2816,13 +2882,37 @@ def api_navision_sync():
 
 @app.route("/api/google/sync", methods=["POST"])
 def api_google_sync():
-    """Lanza sync de Google Ads. Devuelve error si falta Developer Token."""
+    """Lanza sync de Google Ads. Devuelve error tipado si el refresh token
+    de OAuth ha caducado para que el frontend muestre una guia clara."""
     try:
         import google_sync as gs
         gs.sync()
         return jsonify({"status": "ok"})
     except Exception as e:
-        return jsonify({"status": "error", "error": str(e)}), 500
+        err_str = str(e)
+        # OAuth2: refresh token caducado/revocado. Sale como 'invalid_grant'.
+        # Muy comun cuando la OAuth app esta en modo Testing (Google
+        # invalida refresh tokens tras 7 dias de inactividad).
+        if "invalid_grant" in err_str or "Token has been expired or revoked" in err_str:
+            return jsonify({
+                "status": "error",
+                "error_code": "OAUTH_REFRESH_TOKEN_EXPIRED",
+                "error": "Token Google OAuth caducado o revocado.",
+                "fix": {
+                    "title": "Regenerar refresh token de Google Ads",
+                    "steps": [
+                        "Abre terminal en la carpeta del proyecto",
+                        "Ejecuta: python _get_google_refresh_token.py",
+                        "Autoriza con la cuenta de Google que tiene acceso a Google Ads",
+                        "Copia el GOOGLE_REFRESH_TOKEN= que imprime al .env",
+                        "Reinicia el dashboard y vuelve a Sync Google",
+                    ],
+                    "command": "python _get_google_refresh_token.py",
+                    "console_url": "https://console.cloud.google.com/apis/credentials/consent?project=heroturfs-ads-dashboard",
+                    "tip": "Para evitar que vuelva a caducar, publica la app en el OAuth consent screen (Testing → Production).",
+                },
+            }), 401
+        return jsonify({"status": "error", "error": err_str}), 500
 
 
 @app.route("/api/chat", methods=["POST"])
@@ -2850,6 +2940,357 @@ def api_hubspot_sync():
         return jsonify({"status": "ok"})
     except Exception as e:
         return jsonify({"status": "error", "error": str(e)}), 500
+
+
+# ============================================================================
+# === COMERCIALES: ramp-up + analisis ventas por SDR ===
+# ============================================================================
+# Pestana "Comerciales" del dashboard. Por ahora solo Ivan (Francia).
+# La logica replica la hoja SDR del Excel 'Seguimiento leads Heroturfs.xlsx':
+#   Ventas HT (Navision) -> Margen bruto (×60%) -> Margen tras coste comercial
+#   Coste comercial = sueldo×%imputado + ads×%imputado + herramientas
+#   Umbrales: tecnico (cubre costes) / aceptable (2×) / sano (3×)
+
+
+def _comercial_attribution_clause(rule):
+    """Convierte attribution_rule en (where_clause, params) para Navision.
+    Ej: 'country:Francia' -> (' AND i.sell_country = ?', ['Francia'])
+        'salesperson_code:I03' -> (' AND i.salesperson_code = ?', ['I03'])
+    Retorna ('', []) si la regla no es reconocida (incluye TODO).
+    """
+    if not rule or ":" not in rule:
+        return "", []
+    field, _, value = rule.partition(":")
+    field = field.strip().lower()
+    value = value.strip()
+    field_map = {
+        "country": "i.sell_country",
+        "country_code": "i.sell_country_code",
+        "salesperson_code": "i.salesperson_code",
+        "customer_no": "i.customer_no",
+        # 'sdr_code' se conectara cuando sincronicemos ese campo
+    }
+    col = field_map.get(field)
+    if not col:
+        return "", []
+    return f" AND {col} = ?", [value]
+
+
+def _resolve_comercial_input(conn, code, year_month):
+    """Devuelve los inputs efectivos para (comercial, year_month).
+    Primero busca override mensual, si no encuentra usa el default '*'.
+    Devuelve dict con keys (sueldo_bruto, pct_sueldo, pct_ads, eur_herramientas)
+    o None si no hay datos en absoluto.
+    """
+    rows = conn.execute(
+        "SELECT year_month, sueldo_bruto, pct_sueldo, pct_ads, eur_herramientas "
+        "FROM comercial_inputs WHERE comercial_code = ? AND year_month IN (?, '*')",
+        (code, year_month),
+    ).fetchall()
+    default = None
+    override = None
+    for r in rows:
+        if r["year_month"] == "*":
+            default = r
+        else:
+            override = r
+    if not default and not override:
+        return None
+    # Merge: override gana, default rellena lo que falte
+    def pick(key):
+        if override is not None and override[key] is not None:
+            return override[key]
+        if default is not None:
+            return default[key]
+        return None
+    return {
+        "sueldo_bruto": pick("sueldo_bruto") or 0,
+        "pct_sueldo": pick("pct_sueldo") or 0,
+        "pct_ads": pick("pct_ads") or 0,
+        "eur_herramientas": pick("eur_herramientas") or 0,
+    }
+
+
+@app.route("/api/comerciales")
+def api_comerciales_list():
+    """Lista de comerciales activos para el selector de la pestana."""
+    with _get_conn() as conn:
+        rows = conn.execute(
+            "SELECT code, name, attribution_rule, margen_bruto_pct, objetivo_anual, active "
+            "FROM comerciales WHERE active = 1 ORDER BY name"
+        ).fetchall()
+    return jsonify({"comerciales": [dict(r) for r in rows]})
+
+
+@app.route("/api/comerciales/<code>")
+def api_comercial_detail(code):
+    """Detalle de un comercial: config + lista de inputs (default + overrides)."""
+    with _get_conn() as conn:
+        com = conn.execute(
+            "SELECT code, name, attribution_rule, margen_bruto_pct, objetivo_anual, active "
+            "FROM comerciales WHERE code = ?", (code,)
+        ).fetchone()
+        if not com:
+            return jsonify({"error": "Comercial no encontrado"}), 404
+        inputs = conn.execute(
+            "SELECT year_month, sueldo_bruto, pct_sueldo, pct_ads, eur_herramientas, notes "
+            "FROM comercial_inputs WHERE comercial_code = ? "
+            "ORDER BY CASE WHEN year_month='*' THEN 0 ELSE 1 END, year_month",
+            (code,),
+        ).fetchall()
+    return jsonify({
+        "comercial": dict(com),
+        "inputs": [dict(r) for r in inputs],
+    })
+
+
+@app.route("/api/comerciales/<code>/inputs", methods=["PUT"])
+def api_comercial_inputs_update(code):
+    """Actualiza/crea/borra inputs de un comercial.
+    Body: {inputs: [{year_month, sueldo_bruto, pct_sueldo, pct_ads, eur_herramientas, notes}, ...]}
+    Para borrar un mes pasar action='delete' en su objeto.
+    """
+    data = request.get_json(force=True) or {}
+    inputs = data.get("inputs") or []
+    with _get_conn() as conn:
+        for inp in inputs:
+            ym = (inp.get("year_month") or "").strip()
+            if not ym:
+                continue
+            if inp.get("action") == "delete":
+                db.delete_comercial_input(conn, code, ym)
+                continue
+            db.upsert_comercial_input(
+                conn, code, ym,
+                sueldo_bruto=inp.get("sueldo_bruto"),
+                pct_sueldo=inp.get("pct_sueldo"),
+                pct_ads=inp.get("pct_ads"),
+                eur_herramientas=inp.get("eur_herramientas"),
+                notes=inp.get("notes"),
+            )
+        conn.commit()
+    return jsonify({"status": "ok"})
+
+
+@app.route("/api/comerciales/<code>/config", methods=["PUT"])
+def api_comercial_config_update(code):
+    """Actualiza config global del comercial (name, attribution_rule,
+    margen_bruto_pct, objetivo_anual)."""
+    data = request.get_json(force=True) or {}
+    with _get_conn() as conn:
+        cur = conn.execute("SELECT * FROM comerciales WHERE code = ?", (code,)).fetchone()
+        if not cur:
+            return jsonify({"error": "Comercial no encontrado"}), 404
+        db.upsert_comercial(
+            conn,
+            code=code,
+            name=data.get("name", cur["name"]),
+            attribution_rule=data.get("attribution_rule", cur["attribution_rule"]),
+            margen_bruto_pct=data.get("margen_bruto_pct", cur["margen_bruto_pct"]),
+            objetivo_anual=data.get("objetivo_anual", cur["objetivo_anual"]),
+            active=data.get("active", cur["active"]),
+        )
+        conn.commit()
+    return jsonify({"status": "ok"})
+
+
+@app.route("/api/comerciales/<code>/analysis")
+def api_comercial_analysis(code):
+    """Analisis mes a mes para un comercial: ventas Navision filtradas
+    por attribution_rule, costes (sueldo+ads+herramientas), margen y
+    umbrales.
+
+    Query params:
+      year: YYYY (default año actual)
+      months: cuantos meses incluir (default 12 desde enero)
+    """
+    year = request.args.get("year", str(date.today().year))
+    try:
+        year_int = int(year)
+    except ValueError:
+        year_int = date.today().year
+
+    with _get_conn() as conn:
+        com = conn.execute(
+            "SELECT * FROM comerciales WHERE code = ?", (code,)
+        ).fetchone()
+        if not com:
+            return jsonify({"error": "Comercial no encontrado"}), 404
+
+        attribution_clause, attribution_params = _comercial_attribution_clause(
+            com["attribution_rule"]
+        )
+        margen_bruto_pct = com["margen_bruto_pct"] or 0.60
+        objetivo_anual = com["objetivo_anual"] or 0
+
+        # === Ventas Navision por mes (HT facturado, neto de anticipos/portes) ===
+        amount_eur_hdr = _navision_amount_eur_sql(
+            amount_col="(i.amount - COALESCE(a.advance_amount, 0) - COALESCE(f.freight_amount, 0))",
+            currency_col="i.currency_code",
+        )
+        sales_sql = f"""
+            {_NAV_RATIOS_CTE}
+            SELECT strftime('%Y-%m', i.posting_date) ym,
+                   SUM({amount_eur_hdr} * COALESCE(r.ht_ratio, 0) * {_NAV_DOC_SIGN_SQL}) revenue,
+                   COUNT(DISTINCT CASE WHEN i.doc_type='invoice' THEN i.invoice_no END) n_inv,
+                   COUNT(DISTINCT CASE WHEN i.doc_type='invoice' THEN i.customer_no END) n_cust
+            FROM navision_invoices i
+            LEFT JOIN invoice_ratios r ON r.invoice_no = i.invoice_no
+            LEFT JOIN advance_payments a ON a.invoice_no = i.invoice_no
+            LEFT JOIN freight_amounts f ON f.invoice_no = i.invoice_no
+            WHERE strftime('%Y', i.posting_date) = ?
+              AND COALESCE(r.ht_ratio, 0) > 0
+              {attribution_clause}
+            GROUP BY ym
+            ORDER BY ym
+        """
+        sales_rows = conn.execute(
+            sales_sql, [str(year_int)] + attribution_params
+        ).fetchall()
+        ventas_by_ym = {r["ym"]: dict(r) for r in sales_rows}
+
+        # === Coste publicidad Meta+Google por mes (atribuido por país si aplica) ===
+        # Si la attribution_rule es por país, restringimos el spend a ese país.
+        country_filter = None
+        if (com["attribution_rule"] or "").startswith("country:"):
+            country_filter = com["attribution_rule"].split(":", 1)[1].strip()
+
+        ads_by_ym = {}  # {ym: {meta: x, google: y}}
+        for ym in [f"{year_int}-{m:02d}" for m in range(1, 13)]:
+            ads_by_ym[ym] = {"meta": 0.0, "google": 0.0}
+
+        # Meta
+        meta_sql = (
+            "SELECT strftime('%Y-%m', i.date) ym, SUM(i.spend) s "
+            "FROM insights_daily i JOIN campaigns c ON c.id = i.campaign_id "
+            "WHERE strftime('%Y', i.date) = ?"
+        )
+        meta_params = [str(year_int)]
+        if country_filter:
+            meta_sql += " AND c.country = ?"
+            meta_params.append(country_filter)
+        meta_sql += " GROUP BY ym"
+        for r in conn.execute(meta_sql, meta_params):
+            if r["ym"] in ads_by_ym:
+                ads_by_ym[r["ym"]]["meta"] = r["s"] or 0
+
+        # Google
+        google_sql = (
+            "SELECT strftime('%Y-%m', i.date) ym, SUM(i.cost) s "
+            "FROM google_insights_daily i JOIN google_campaigns c ON c.id = i.campaign_id "
+            "WHERE strftime('%Y', i.date) = ?"
+        )
+        google_params = [str(year_int)]
+        if country_filter:
+            google_sql += " AND c.country = ?"
+            google_params.append(country_filter)
+        google_sql += " GROUP BY ym"
+        for r in conn.execute(google_sql, google_params):
+            if r["ym"] in ads_by_ym:
+                ads_by_ym[r["ym"]]["google"] = r["s"] or 0
+
+        # === Calcular fila por mes ===
+        months = []
+        for m in range(1, 13):
+            ym = f"{year_int}-{m:02d}"
+            inp = _resolve_comercial_input(conn, code, ym) or {
+                "sueldo_bruto": 0, "pct_sueldo": 0, "pct_ads": 0,
+                "eur_herramientas": 0,
+            }
+            ventas_row = ventas_by_ym.get(ym, {})
+            ventas = ventas_row.get("revenue") or 0
+            n_inv = ventas_row.get("n_inv") or 0
+            n_cust = ventas_row.get("n_cust") or 0
+
+            ads_meta = ads_by_ym[ym]["meta"]
+            ads_google = ads_by_ym[ym]["google"]
+            ads_total = ads_meta + ads_google
+
+            coste_personal = (inp["sueldo_bruto"] or 0) * (inp["pct_sueldo"] or 0)
+            coste_ads = ads_total * (inp["pct_ads"] or 0)
+            coste_herramientas = inp["eur_herramientas"] or 0
+            coste_total = coste_personal + coste_ads + coste_herramientas
+
+            margen_bruto = ventas * margen_bruto_pct
+            margen_neto = margen_bruto - coste_total
+            margen_pct = (margen_neto / ventas) if ventas > 0 else None
+            veces_salario = (margen_bruto / coste_personal) if coste_personal > 0 else None
+
+            # Umbrales mensuales: necesitamos cuanto vender para cubrir coste_total
+            # con margen_bruto_pct = coste_total / margen_bruto_pct
+            umbral_tecnico = (coste_total / margen_bruto_pct) if margen_bruto_pct > 0 else 0
+            minimo_aceptable = umbral_tecnico * 2
+            objetivo_sano = umbral_tecnico * 3
+
+            months.append({
+                "year_month": ym,
+                "ventas": round(ventas, 2),
+                "n_facturas": n_inv,
+                "n_clientes": n_cust,
+                "ads_meta": round(ads_meta, 2),
+                "ads_google": round(ads_google, 2),
+                "ads_total": round(ads_total, 2),
+                "inputs": {
+                    "sueldo_bruto": inp["sueldo_bruto"],
+                    "pct_sueldo": inp["pct_sueldo"],
+                    "pct_ads": inp["pct_ads"],
+                    "eur_herramientas": inp["eur_herramientas"],
+                },
+                "coste_personal": round(coste_personal, 2),
+                "coste_ads": round(coste_ads, 2),
+                "coste_herramientas": round(coste_herramientas, 2),
+                "coste_total": round(coste_total, 2),
+                "margen_bruto": round(margen_bruto, 2),
+                "margen_neto": round(margen_neto, 2),
+                "margen_pct": round(margen_pct, 4) if margen_pct is not None else None,
+                "veces_salario": round(veces_salario, 2) if veces_salario is not None else None,
+                "umbral_tecnico": round(umbral_tecnico, 2),
+                "minimo_aceptable": round(minimo_aceptable, 2),
+                "objetivo_sano": round(objetivo_sano, 2),
+            })
+
+        # === Totales anuales acumulados ===
+        total_ventas = sum(m["ventas"] for m in months)
+        total_coste_personal = sum(m["coste_personal"] for m in months)
+        total_coste_ads = sum(m["coste_ads"] for m in months)
+        total_coste_herramientas = sum(m["coste_herramientas"] for m in months)
+        total_coste = total_coste_personal + total_coste_ads + total_coste_herramientas
+        total_margen_bruto = total_ventas * margen_bruto_pct
+        total_margen_neto = total_margen_bruto - total_coste
+        total_n_inv = sum(m["n_facturas"] for m in months)
+        total_n_cust = sum(m["n_clientes"] for m in months)
+        progreso_objetivo = (total_ventas / objetivo_anual) if objetivo_anual > 0 else None
+        total_umbral_tecnico = (total_coste / margen_bruto_pct) if margen_bruto_pct > 0 else 0
+        total_veces_salario = (total_margen_bruto / total_coste_personal) if total_coste_personal > 0 else None
+
+    return jsonify({
+        "comercial": {
+            "code": com["code"],
+            "name": com["name"],
+            "attribution_rule": com["attribution_rule"],
+            "margen_bruto_pct": com["margen_bruto_pct"],
+            "objetivo_anual": com["objetivo_anual"],
+        },
+        "year": year_int,
+        "months": months,
+        "totals": {
+            "ventas": round(total_ventas, 2),
+            "n_facturas": total_n_inv,
+            "n_clientes": total_n_cust,
+            "coste_personal": round(total_coste_personal, 2),
+            "coste_ads": round(total_coste_ads, 2),
+            "coste_herramientas": round(total_coste_herramientas, 2),
+            "coste_total": round(total_coste, 2),
+            "margen_bruto": round(total_margen_bruto, 2),
+            "margen_neto": round(total_margen_neto, 2),
+            "objetivo_anual": objetivo_anual,
+            "progreso_objetivo": round(progreso_objetivo, 4) if progreso_objetivo is not None else None,
+            "umbral_tecnico_anual": round(total_umbral_tecnico, 2),
+            "minimo_aceptable_anual": round(total_umbral_tecnico * 2, 2),
+            "objetivo_sano_anual": round(total_umbral_tecnico * 3, 2),
+            "veces_salario_anual": round(total_veces_salario, 2) if total_veces_salario is not None else None,
+        },
+    })
 
 
 if __name__ == "__main__":
